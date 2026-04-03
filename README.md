@@ -1,6 +1,12 @@
 # Acrionix Shield
 
-**Pre-publish security scanner — prevents source leaks and detects supply chain attacks in npm packages.**
+[![npm version](https://img.shields.io/npm/v/acrionix-shield.svg)](https://www.npmjs.com/package/acrionix-shield)
+[![npm downloads](https://img.shields.io/npm/dw/acrionix-shield.svg)](https://www.npmjs.com/package/acrionix-shield)
+[![license](https://img.shields.io/npm/l/acrionix-shield.svg)](https://github.com/andrei-gogo/acrionix-shield/blob/main/LICENSE)
+
+> If you find this useful, please give it a star on GitHub — it helps others discover the project and keeps us motivated to improve it!
+
+**Pre-publish security scanner — prevents source leaks and detects supply chain attacks across 7 languages.**
 
 Built by [Acrionix Technologies](https://acrionix.com) in response to the [Anthropic/Claude Code source leak](https://www.cnbc.com/2026/03/31/anthropic-leak-claude-code-internal-source.html) and the [axios supply chain attack](https://socket.dev/blog/axios-supply-chain-attack) of March 2026.
 
