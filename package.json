@@ -37,7 +37,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/andrei-gogo/acrionix-shield.git"
+    "url": "git+https://github.com/andrei-gogo/acrionix-shield.git"
   },
   "engines": {
     "node": ">=16.0.0"
