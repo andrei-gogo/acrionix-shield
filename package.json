@@ -1,11 +1,16 @@
 {
   "name": "acrionix-shield",
-  "version": "1.0.0",
-  "description": "Pre-publish security scanner — prevents source leaks and detects supply chain attacks in npm packages",
+  "version": "1.1.0",
+  "description": "Pre-publish security scanner — source leaks, redacted secret detection and offline curated dependency rules for npm, Python, Java, .NET, Ruby, Go and PHP, plus Docker and git history checks",
   "main": "src/index.js",
   "bin": {
     "acrionix-shield": "src/cli.js"
   },
+  "files": [
+    "src/",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "test": "node test/run.js",
     "lint": "node src/cli.js check"
@@ -17,7 +22,16 @@
     "source-leak",
     "ci",
     "pre-publish",
-    "scanner"
+    "scanner",
+    "php",
+    "composer",
+    "python",
+    "java",
+    "dotnet",
+    "ruby",
+    "go",
+    "docker",
+    "git-secrets"
   ],
   "author": "Acrionix Technologies <contact@acrionix.com> (https://acrionix.com)",
   "license": "MIT",

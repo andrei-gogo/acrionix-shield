@@ -83,17 +83,19 @@ function parseGoMod(dir) {
   return deps;
 }
 
+// Exact match against the advisory's explicit version list (0.3.60 is not 0.3.6)
 function versionMatch(version, targets) {
   if (targets.includes('*')) return true;
-  return targets.some(t => version.includes(t));
+  return targets.includes(version.replace(/\+incompatible$/, ''));
 }
 
 async function runGoScan(dir, config = {}) {
   const findings = [];
 
+  // go.mod holds the selected versions; go.sum keeps checksums for historical versions too,
+  // so it is only used when there is no go.mod to read
   const goModDeps = parseGoMod(dir);
-  const goSumDeps = parseGoSum(dir);
-  const allDeps = { ...goModDeps, ...goSumDeps };
+  const allDeps = fs.existsSync(path.join(dir, 'go.mod')) ? goModDeps : parseGoSum(dir);
 
   if (Object.keys(allDeps).length === 0) return findings;
 

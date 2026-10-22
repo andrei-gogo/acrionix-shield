@@ -79,6 +79,7 @@ function formatResults(results) {
   printSection('.NET / NUGET', results.dotnet || []);
   printSection('RUBY / GEMS', results.ruby || []);
   printSection('GO MODULES', results.go || []);
+  printSection('PHP / COMPOSER', results.php || []);
   printSection('DOCKER SECURITY', results.docker || []);
   printSection('GIT SECRETS', results.git || []);
 }

@@ -1,5 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const { redactUrl } = require('../redact');
 
 // Known compromised packages — maintained list
 // Format: { "package-name": [{ version, advisory, description, severity }] }
@@ -178,6 +179,8 @@ const TYPOSQUAT_TARGETS = {
   'd3': ['d3.js', 'dd3'],
 };
 
+// deps is keyed by install location (or name@version), never by bare name, so a nested
+// copy of a package cannot hide another copy at a different version. Each entry carries `name`.
 function parseLockfile(dir) {
   const deps = {};
 
@@ -191,20 +194,21 @@ function parseLockfile(dir) {
       if (lock.packages) {
         for (const [pkgPath, info] of Object.entries(lock.packages)) {
           if (!pkgPath) continue; // root package
-          const name = pkgPath.replace(/^node_modules\//, '').replace(/^.*node_modules\//, '');
-          deps[name] = { version: info.version, resolved: info.resolved, integrity: info.integrity };
+          const name = pkgPath.replace(/^.*node_modules\//, '');
+          deps[pkgPath] = { name, version: info.version, resolved: info.resolved, integrity: info.integrity };
         }
       }
 
-      // npm v1 lockfile format
-      if (lock.dependencies) {
-        function walkDeps(depMap) {
+      // npm v1 lockfile format (v2 lockfiles carry both; packages is authoritative)
+      if (lock.dependencies && !lock.packages) {
+        function walkDeps(depMap, prefix) {
           for (const [name, info] of Object.entries(depMap)) {
-            deps[name] = { version: info.version, resolved: info.resolved, integrity: info.integrity };
-            if (info.dependencies) walkDeps(info.dependencies);
+            const pkgPath = `${prefix}node_modules/${name}`;
+            deps[pkgPath] = { name, version: info.version, resolved: info.resolved, integrity: info.integrity };
+            if (info.dependencies) walkDeps(info.dependencies, `${pkgPath}/`);
           }
         }
-        walkDeps(lock.dependencies);
+        walkDeps(lock.dependencies, '');
       }
 
       return { type: 'package-lock.json', deps };
@@ -220,19 +224,21 @@ function parseLockfile(dir) {
       const content = fs.readFileSync(yarnLockPath, 'utf8');
       const lines = content.split('\n');
       let currentPkg = null;
+      let current = null;
 
       for (const line of lines) {
         const pkgMatch = line.match(/^"?(@?[^@\s"]+)@/);
         if (pkgMatch && !line.startsWith(' ')) {
           currentPkg = pkgMatch[1];
+          current = null;
         }
         if (currentPkg && line.match(/^\s+version\s+"?([^"\s]+)/)) {
           const version = line.match(/^\s+version\s+"?([^"\s]+)/)[1];
-          deps[currentPkg] = { version };
+          current = { name: currentPkg, version };
+          deps[`${currentPkg}@${version}`] = current;
         }
-        if (currentPkg && line.match(/^\s+resolved\s+"?([^"\s]+)/)) {
-          const resolved = line.match(/^\s+resolved\s+"?([^"\s]+)/)[1];
-          deps[currentPkg].resolved = resolved;
+        if (current && line.match(/^\s+resolved\s+"?([^"\s]+)/)) {
+          current.resolved = line.match(/^\s+resolved\s+"?([^"\s]+)/)[1];
         }
       }
 
@@ -250,7 +256,7 @@ function parseLockfile(dir) {
       const pkgRegex = /\/(@?[^@\s:]+)@([^:\s(]+)/g;
       let match;
       while ((match = pkgRegex.exec(content))) {
-        deps[match[1]] = { version: match[2] };
+        deps[`${match[1]}@${match[2]}`] = { name: match[1], version: match[2] };
       }
       return { type: 'pnpm-lock.yaml', deps };
     } catch (err) {
@@ -268,12 +274,18 @@ function versionMatch(version, targetVersions) {
 
 async function runSupplyChainScan(dir, config = {}) {
   const findings = [];
-  const allCompromised = { ...KNOWN_COMPROMISED, ...(config.knownCompromised || {}) };
+  // knownCompromised holds npm entries (arrays) plus per-ecosystem maps like knownCompromised.php
+  const npmOverrides = Object.fromEntries(
+    Object.entries(config.knownCompromised || {}).filter(([, entries]) => Array.isArray(entries))
+  );
+  const allCompromised = { ...KNOWN_COMPROMISED, ...npmOverrides };
 
   // Parse lockfile
   const lockfile = parseLockfile(dir);
 
   if (!lockfile.type) {
+    // Only npm projects are expected to have an npm lockfile
+    if (!fs.existsSync(path.join(dir, 'package.json'))) return findings;
     findings.push({
       type: 'missing-lockfile',
       severity: 'medium',
@@ -296,8 +308,19 @@ async function runSupplyChainScan(dir, config = {}) {
 
   const depCount = Object.keys(lockfile.deps).length;
 
+  // One finding per name@version, however many install locations share it
+  const installs = [];
+  const seenInstalls = new Set();
+  for (const info of Object.values(lockfile.deps)) {
+    const id = `${info.name}@${info.version}`;
+    if (seenInstalls.has(id)) continue;
+    seenInstalls.add(id);
+    installs.push(info);
+  }
+
   // Check against known compromised packages
-  for (const [name, info] of Object.entries(lockfile.deps)) {
+  for (const info of installs) {
+    const name = info.name;
     const compromisedEntries = allCompromised[name];
     if (compromisedEntries) {
       for (const entry of compromisedEntries) {
@@ -318,7 +341,7 @@ async function runSupplyChainScan(dir, config = {}) {
   }
 
   // Check for typosquatting
-  for (const name of Object.keys(lockfile.deps)) {
+  for (const { name, version } of installs) {
     for (const [legitimate, typosquats] of Object.entries(TYPOSQUAT_TARGETS)) {
       if (typosquats.includes(name)) {
         findings.push({
@@ -326,7 +349,7 @@ async function runSupplyChainScan(dir, config = {}) {
           severity: 'critical',
           file: lockfile.type,
           package: name,
-          version: lockfile.deps[name].version,
+          version,
           description: `Possible typosquat of "${legitimate}"`,
           recommendation: `Verify that "${name}" is the intended package, not a typosquat of "${legitimate}"`,
         });
@@ -335,19 +358,21 @@ async function runSupplyChainScan(dir, config = {}) {
   }
 
   // Check for suspicious registry URLs
-  for (const [name, info] of Object.entries(lockfile.deps)) {
+  for (const info of installs) {
+    const name = info.name;
     if (info.resolved && !info.resolved.startsWith('https://registry.npmjs.org/') &&
         !info.resolved.startsWith('https://registry.yarnpkg.com/') &&
         !info.resolved.startsWith('https://registry.npmmirror.com/') &&
         !info.resolved.match(/^https?:\/\/[^/]*\.github\.com/)) {
+      const resolved = redactUrl(info.resolved);
       findings.push({
         type: 'suspicious-registry',
         severity: 'high',
         file: lockfile.type,
         package: name,
         version: info.version,
-        resolved: info.resolved,
-        description: `Package resolved from non-standard registry: ${info.resolved}`,
+        resolved,
+        description: `Package resolved from non-standard registry: ${resolved}`,
         recommendation: `Verify the registry URL for ${name} is trusted`,
       });
     }
@@ -355,9 +380,9 @@ async function runSupplyChainScan(dir, config = {}) {
 
   // Check for missing integrity hashes
   if (lockfile.type === 'package-lock.json') {
-    const missingIntegrity = Object.entries(lockfile.deps)
-      .filter(([, info]) => !info.integrity && info.resolved)
-      .map(([name]) => name);
+    const missingIntegrity = installs
+      .filter(info => !info.integrity && info.resolved)
+      .map(info => info.name);
 
     if (missingIntegrity.length > 0) {
       findings.push({

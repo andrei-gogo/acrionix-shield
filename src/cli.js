@@ -11,11 +11,14 @@ const { runJavaScan } = require('./scanners/java-scanner');
 const { runRubyScan } = require('./scanners/ruby-scanner');
 const { runGoScan } = require('./scanners/go-scanner');
 const { runDotnetScan } = require('./scanners/dotnet-scanner');
+const { runPhpScan } = require('./scanners/php-scanner');
 const { formatResults, severityColor } = require('./reporter');
+
+const { version } = require('../package.json');
 
 const BANNER = `
   ╔══════════════════════════════════════╗
-  ║       ACRIONIX SHIELD v1.0.0        ║
+  ║       ACRIONIX SHIELD v${version.padEnd(13)}║
   ║   Pre-Publish Security Scanner      ║
   ╚══════════════════════════════════════╝
 `;
@@ -32,6 +35,8 @@ Commands:
   scan-dotnet     Scan .NET/C# dependencies (.csproj, packages.config)
   scan-ruby       Scan Ruby dependencies (Gemfile, Gemfile.lock)
   scan-go         Scan Go dependencies (go.mod, go.sum)
+  scan-php        Check declared PHP runtime version (PHP2Shell), Composer TLS
+                  settings and custom Composer blocklist (no Packagist advisories)
   scan-docker     Scan Dockerfiles and docker-compose for security issues
   scan-git        Scan git history for leaked secrets
 
@@ -128,12 +133,12 @@ async function main() {
     console.log(BANNER);
   }
 
-  const results = { leaks: [], supplyChain: [], python: [], java: [], dotnet: [], ruby: [], go: [], docker: [], git: [] };
+  const results = { leaks: [], supplyChain: [], python: [], java: [], dotnet: [], ruby: [], go: [], php: [], docker: [], git: [] };
   const severityOrder = { low: 0, medium: 1, high: 2, critical: 3 };
   const minSeverity = severityOrder[options.severity] || 0;
 
   const scanAll = options.command === 'check';
-  const totalSteps = scanAll ? 9 : 1;
+  const totalSteps = scanAll ? 10 : 1;
   let step = 0;
 
   try {
@@ -170,6 +175,11 @@ async function main() {
     if (scanAll || options.command === 'scan-go') {
       if (!options.json) console.log(`  [${++step}/${totalSteps}] Scanning Go modules...\n`);
       results.go = await runGoScan(options.dir, config);
+    }
+
+    if (scanAll || options.command === 'scan-php') {
+      if (!options.json) console.log(`  [${++step}/${totalSteps}] Scanning PHP runtime and Composer dependencies...\n`);
+      results.php = await runPhpScan(options.dir, config);
     }
 
     if (scanAll || options.command === 'scan-docker') {

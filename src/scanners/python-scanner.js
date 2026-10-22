@@ -134,8 +134,7 @@ async function runPythonScan(dir, config = {}) {
   const poetryDeps = parsePoetryLock(dir);
   const allDeps = { ...reqDeps, ...pipDeps, ...poetryDeps };
 
-  if (Object.keys(allDeps).length === 0) return findings;
-
+  // pip config is checked below even when there are no dependency files
   // Check against compromised packages
   for (const [name, info] of Object.entries(allDeps)) {
     const compromised = COMPROMISED_PYPI[name];

@@ -1,5 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const { redactSecret } = require('../redact');
 
 // Dangerous file patterns that should never be in an npm package
 const DANGEROUS_FILES = [
@@ -42,9 +43,9 @@ const SENSITIVE_CONTENT_PATTERNS = [
   { pattern: /(?:secret|password|passwd|pwd)\s*[:=]\s*['"][^'"]{8,}['"]/gi, description: 'Hardcoded secret/password', severity: 'critical' },
   { pattern: /(?:access[_-]?token|auth[_-]?token)\s*[:=]\s*['"][a-z0-9._-]{20,}['"]/gi, description: 'Hardcoded access token', severity: 'critical' },
   { pattern: /-----BEGIN (?:RSA |EC |DSA )?PRIVATE KEY-----/g, description: 'Embedded private key', severity: 'critical' },
-  { pattern: /-----BEGIN CERTIFICATE-----/g, description: 'Embedded certificate', severity: 'medium' },
-  { pattern: /\/\/# sourceMappingURL=.+\.map/g, description: 'Source map reference', severity: 'high' },
-  { pattern: /\/\/#\s*sourceURL=/g, description: 'Source URL directive', severity: 'high' },
+  { pattern: /-----BEGIN CERTIFICATE-----/g, description: 'Embedded certificate', severity: 'medium', public: true },
+  { pattern: /\/\/# sourceMappingURL=.+\.map/g, description: 'Source map reference', severity: 'high', public: true },
+  { pattern: /\/\/#\s*sourceURL=/g, description: 'Source URL directive', severity: 'high', public: true },
   { pattern: /(?:AKIA|ASIA)[A-Z0-9]{16}/g, description: 'AWS Access Key ID', severity: 'critical' },
   { pattern: /ghp_[A-Za-z0-9_]{36}/g, description: 'GitHub Personal Access Token', severity: 'critical' },
   { pattern: /npm_[A-Za-z0-9]{36}/g, description: 'npm access token', severity: 'critical' },
@@ -123,7 +124,8 @@ async function runLeakScan(dir, config = {}) {
     } catch {}
   }
 
-  if (!hasNpmignore && !hasFilesField) {
+  // npm publish advice only applies to npm packages
+  if (fs.existsSync(pkgJsonPath) && !hasNpmignore && !hasFilesField) {
     findings.push({
       type: 'config',
       severity: 'medium',
@@ -162,9 +164,9 @@ async function runLeakScan(dir, config = {}) {
     }
 
     const allContentPatterns = [
-      ...CLOUD_URL_PATTERNS,
+      ...CLOUD_URL_PATTERNS.map(p => ({ ...p, public: true })),
       ...SENSITIVE_CONTENT_PATTERNS,
-      ...INTERNAL_PATH_PATTERNS,
+      ...INTERNAL_PATH_PATTERNS.map(p => ({ ...p, public: true })),
       ...(config.customCloudPatterns || []).map(p => ({
         pattern: new RegExp(p.pattern, p.flags || 'gi'),
         description: p.description || 'Custom cloud pattern match',
@@ -192,7 +194,9 @@ async function runLeakScan(dir, config = {}) {
           file: file.relativePath,
           line,
           description: rule.description,
-          match: matches[0].substring(0, 100) + (matches[0].length > 100 ? '...' : ''),
+          match: rule.public
+            ? matches[0].substring(0, 100) + (matches[0].length > 100 ? '...' : '')
+            : redactSecret(matches[0]),
           count: matches.length,
           recommendation: `Review and remove sensitive content from ${file.relativePath}:${line}`,
         });

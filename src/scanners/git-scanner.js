@@ -1,6 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { execSync } = require('node:child_process');
+const { redactSecret } = require('../redact');
 
 // Patterns that should never appear in git history
 const GIT_SECRET_PATTERNS = [
@@ -107,42 +108,56 @@ async function runGitScan(dir, config = {}) {
     }
   }
 
-  // Scan recent git history for secrets (last 50 commits)
+  // Scan recent git history for secrets (last 50 commits).
+  // Every commit patch is scanned — added files and modifications — but only added lines,
+  // so removing a secret does not report it again.
   try {
     const log = execSync(
-      'git log --diff-filter=A -p --no-color -n 50 -- . 2>/dev/null',
+      'git log -p --no-color --no-ext-diff -n 50 --format="commit %H" -- . 2>/dev/null',
       { cwd: dir, maxBuffer: 10 * 1024 * 1024, encoding: 'utf8', timeout: 30000 }
     );
 
-    const commits = log.split(/^commit [a-f0-9]{40}$/m);
+    const reported = new Set();
+    let commit = null;
+    let file = null;
 
-    for (const commit of commits) {
-      if (!commit.trim()) continue;
+    for (const line of log.split('\n')) {
+      const commitMatch = line.match(/^commit ([a-f0-9]{40})$/);
+      if (commitMatch) {
+        commit = commitMatch[1];
+        file = null;
+        continue;
+      }
+      const fileMatch = line.match(/^\+\+\+ (?:b\/(.+)|\/dev\/null)$/);
+      if (fileMatch) {
+        file = fileMatch[1] || null;
+        continue;
+      }
+      if (!commit || !file || !line.startsWith('+')) continue;
 
-      // Get commit hash from the diff
-      const hashMatch = log.match(/^commit ([a-f0-9]{40})/m);
-
+      const added = line.slice(1);
       for (const rule of GIT_SECRET_PATTERNS) {
         rule.pattern.lastIndex = 0;
-        const matches = commit.match(rule.pattern);
-        if (matches) {
-          // Filter out false positives (test files, examples, etc.)
-          const isTestOrExample = commit.includes('test') || commit.includes('example') || commit.includes('fixture');
+        const matches = added.match(rule.pattern);
+        if (!matches) continue;
 
-          // Find which file this was in
-          const fileMatch = commit.match(/^\+\+\+ b\/(.+)$/m);
-          const file = fileMatch ? fileMatch[1] : 'unknown';
+        const key = `${commit}:${file}:${rule.description}`;
+        if (reported.has(key)) continue;
+        reported.add(key);
 
-          findings.push({
-            type: 'git-secret',
-            severity: isTestOrExample ? 'medium' : rule.severity,
-            file: file,
-            description: `${rule.description} found in git history`,
-            match: matches[0].substring(0, 20) + '***' + matches[0].substring(matches[0].length - 4),
-            ecosystem: 'git',
-            recommendation: `Rotate this ${rule.description.toLowerCase()} immediately and remove from git history using git filter-branch or BFG Repo-Cleaner`,
-          });
-        }
+        // Lower severity for test files, examples and fixtures
+        const isTestOrExample = /test|example|fixture/i.test(file);
+
+        findings.push({
+          type: 'git-secret',
+          severity: isTestOrExample ? 'medium' : rule.severity,
+          file,
+          commit: commit.slice(0, 12),
+          description: `${rule.description} found in git history`,
+          match: redactSecret(matches[0]),
+          ecosystem: 'git',
+          recommendation: `Rotate this ${rule.description.toLowerCase()} immediately and remove from git history using git filter-branch or BFG Repo-Cleaner`,
+        });
       }
     }
   } catch {

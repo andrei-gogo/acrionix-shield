@@ -1,5 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const { redactSecret } = require('../redact');
 
 // Known vulnerable or deprecated base images
 const RISKY_IMAGES = {
@@ -98,23 +99,33 @@ const DOCKERFILE_RULES = [
 
 function findDockerfiles(dir) {
   const results = [];
+  // Dockerfile and dockerfile are the same file on case-insensitive filesystems
+  const seen = new Set();
+  const addIfNew = (filePath, entry) => {
+    let stat;
+    try {
+      stat = fs.statSync(filePath);
+    } catch {
+      return;
+    }
+    const id = `${stat.dev}:${stat.ino}`;
+    if (seen.has(id)) return;
+    seen.add(id);
+    results.push(entry);
+  };
   const names = ['Dockerfile', 'dockerfile', 'Dockerfile.dev', 'Dockerfile.prod',
                  'Dockerfile.staging', 'docker/Dockerfile', '.dockerfile'];
 
   // Check root
   for (const name of names) {
     const filePath = path.join(dir, name);
-    if (fs.existsSync(filePath)) {
-      results.push({ path: filePath, name });
-    }
+    addIfNew(filePath, { path: filePath, name });
   }
 
   // Check for docker-compose
   for (const name of ['docker-compose.yml', 'docker-compose.yaml', 'compose.yml', 'compose.yaml']) {
     const filePath = path.join(dir, name);
-    if (fs.existsSync(filePath)) {
-      results.push({ path: filePath, name, isCompose: true });
-    }
+    addIfNew(filePath, { path: filePath, name, isCompose: true });
   }
 
   return results;
@@ -177,7 +188,7 @@ async function runDockerScan(dir, config = {}) {
           severity: 'critical',
           file: name,
           description: 'Hardcoded secrets in docker-compose file',
-          match: envMatches[0].substring(0, 60) + '...',
+          match: redactSecret(envMatches[0]),
           ecosystem: 'docker',
           recommendation: 'Use .env files (gitignored) or Docker secrets instead of hardcoding',
         });
@@ -279,4 +290,4 @@ async function runDockerScan(dir, config = {}) {
   return findings;
 }
 
-module.exports = { runDockerScan };
+module.exports = { runDockerScan, findDockerfiles };
