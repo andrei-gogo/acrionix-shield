@@ -1,6 +1,6 @@
 {
   "name": "acrionix-shield",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Pre-publish security scanner — source leaks, redacted secret detection and offline curated dependency rules for npm, Python, Java, .NET, Ruby, Go and PHP, plus Node.js/PHP runtime, Docker, git history and GitHub Actions checks",
   "main": "src/index.js",
   "bin": {

@@ -29,6 +29,28 @@ npx acrionix-shield check
 
 That's it. No config needed.
 
+### See a real scan
+
+This repository includes an [intentionally vulnerable PHP Dockerfile](https://github.com/andrei-gogo/acrionix-shield/blob/main/examples/php-runtime/Dockerfile). From a clone of the repo, run:
+
+```bash
+npx acrionix-shield@1.2.1 scan-php --dir examples/php-runtime
+```
+
+Shield reports the affected runtime and the precise patch to use:
+
+```text
+[1/1] Scanning PHP runtime and Composer dependencies...
+CRITICAL (1 finding)
+  PHP2Shell — PHP 8.3.30 is unpatched
+  File: Dockerfile:1
+  Advisory: CVE-2026-109618, CVE-2026-109619
+  Fix: Upgrade to PHP 8.3.36 or later
+Found 1 issue(s). Review before publishing.
+```
+
+The example contains no real application or secrets. See the [reproduction and fix](https://github.com/andrei-gogo/acrionix-shield/blob/main/examples/php-runtime/README.md). Shield uses a finite offline advisory list; a clean scan does not replace your ecosystem's full audit tools. [Coverage limits](#coverage-limits) explain what it can and cannot check.
+
 ## What It Scans
 
 ### Source Leak Scanner
