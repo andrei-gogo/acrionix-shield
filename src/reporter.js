@@ -82,6 +82,7 @@ function formatResults(results) {
   printSection('PHP / COMPOSER', results.php || []);
   printSection('DOCKER SECURITY', results.docker || []);
   printSection('GIT SECRETS', results.git || []);
+  printSection('GITHUB ACTIONS', results.actions || []);
 }
 
 function groupBySeverity(findings) {

@@ -10,6 +10,8 @@ const { runRubyScan } = require('../src/scanners/ruby-scanner');
 const { runGoScan } = require('../src/scanners/go-scanner');
 const { runDotnetScan } = require('../src/scanners/dotnet-scanner');
 const { runPhpScan } = require('../src/scanners/php-scanner');
+const { runActionsScan } = require('../src/scanners/actions-scanner');
+const { entryMatches } = require('../src/version-range');
 
 const FIXTURE_DIR = path.join(__dirname, 'fixtures');
 let passed = 0;
@@ -123,7 +125,7 @@ async function setup() {
     '<?xml version="1.0"?>\n<project>\n<dependencies>\n' +
     '  <dependency>\n    <groupId>org.apache.logging.log4j</groupId>\n    <artifactId>log4j-core</artifactId>\n    <version>2.14.1</version>\n  </dependency>\n' +
     '  <dependency>\n    <groupId>com.fasterxml.jackson.core</groupId>\n    <artifactId>jackson-databind</artifactId>\n    <version>2.9.8</version>\n  </dependency>\n' +
-    '  <dependency>\n    <groupId>org.springframework</groupId>\n    <artifactId>spring-core</artifactId>\n    <version>5.3.17</version>\n  </dependency>\n' +
+    '  <dependency>\n    <groupId>org.springframework</groupId>\n    <artifactId>spring-webmvc</artifactId>\n    <version>5.3.17</version>\n  </dependency>\n' +
     '</dependencies>\n' +
     '<repositories><repository><url>http://insecure-repo.example.com</url></repository></repositories>\n' +
     '</project>'
@@ -230,7 +232,7 @@ async function setup() {
     '<Project Sdk="Microsoft.NET.Sdk">\n' +
     '  <ItemGroup>\n' +
     '    <PackageReference Include="Newtonsoft.Json" Version="11.0.1" />\n' +
-    '    <PackageReference Include="log4net" Version="2.0.12" />\n' +
+    '    <PackageReference Include="log4net" Version="2.0.9" />\n' +
     '    <PackageReference Include="System.Net.Http" Version="4.3.0" />\n' +
     '  </ItemGroup>\n' +
     '</Project>'
@@ -271,6 +273,21 @@ async function testCrossScannerRegressions() {
   const leakTest = await runLeakScan(path.join(FIXTURE_DIR, 'leak-test'), {});
   assert(leakTest.some(r => r.description === 'macOS user home path' && r.match.includes('/Users/developer/')),
     'Non-secret matches (paths, URLs) are not redacted');
+
+  // Provider secret rules are shared, so file scans catch Stripe/SendGrid/DB URLs too
+  const stripeKey = 'sk_live_' + 'Z'.repeat(26);
+  writeFixture('shared-secrets/server.js', `const stripe = "${stripeKey}";\nconst db = "postgresql://app:hunter2hunter2@db.internal:5432/app";\n`);
+  writeFixture('shared-secrets/package.json', '{"name":"s","version":"1.0.0","files":["server.js"]}');
+  const shared = await runLeakScan(path.join(FIXTURE_DIR, 'shared-secrets'), {});
+  assert(shared.some(r => r.description === 'Stripe live secret key'), 'Leak scanner detects Stripe live keys');
+  assert(shared.some(r => r.description === 'PostgreSQL connection string with credentials'), 'Leak scanner detects DB URLs with credentials');
+  assert(!JSON.stringify(shared).includes(stripeKey), 'Shared secret rules stay redacted');
+
+  // Legitimate PyPI packages are not reported as malware or typosquats
+  writeFixture('pypi-legit/requirements.txt', 'ctx==0.1.2\nphpass==0.9.0\npython-binance==1.0.19\npypistats==1.6.0\nsklearn==0.0.post12\nPillow-SIMD==9.0.0.post1\npython-dateutil==2.9.0\nBeautifulSoup==3.2.2\n');
+  const legit = await runPythonScan(path.join(FIXTURE_DIR, 'pypi-legit'), {});
+  assert(!legit.some(r => ['python-binance', 'pypistats', 'sklearn', 'Pillow-SIMD', 'python-dateutil', 'beautifulsoup', 'ctx', 'phpass'].includes(r.package)),
+    'Legitimate PyPI packages (python-binance, pypistats, sklearn, Pillow-SIMD, python-dateutil, BeautifulSoup) are not flagged');
 
   // Non-npm projects don't get npm lockfile or publish warnings
   writeFixture('php-only/composer.json', JSON.stringify({ name: 'acme/lib' }));
@@ -421,7 +438,8 @@ async function testPythonScanner() {
   const results = await runPythonScan(path.join(FIXTURE_DIR, 'python-test'), {});
 
   assert(results.some(r => r.package === 'requessts'), 'Detects Python typosquat (requessts)');
-  assert(results.some(r => r.package === 'requessts' && r.severity === 'critical'), 'Python typosquat rated as critical');
+  assert(results.some(r => r.package === 'requessts' && r.type === 'typosquat' && r.severity === 'high'), 'Python name-similarity typosquat rated high, not critical');
+  assert(results.some(r => r.package === 'requessts' && r.type === 'compromised-pypi' && r.severity === 'critical'), 'requessts (MAL-2022-7438) is confirmed malware, critical');
   assert(results.some(r => r.package === 'ctx'), 'Detects compromised PyPI package (ctx)');
   assert(results.some(r => r.type === 'unpinned-deps'), 'Warns about unpinned dependencies');
 
@@ -461,7 +479,7 @@ async function testJavaScanner() {
   const pomResults = await runJavaScan(path.join(FIXTURE_DIR, 'java-test'), {});
   assert(pomResults.some(r => r.package && r.package.includes('log4j-core')), 'Detects vulnerable Log4j (Log4Shell)');
   assert(pomResults.some(r => r.advisory && r.advisory.includes('Log4Shell')), 'Identifies Log4Shell CVE');
-  assert(pomResults.some(r => r.package && r.package.includes('spring-core')), 'Detects vulnerable Spring (Spring4Shell)');
+  assert(pomResults.some(r => r.package && r.package.includes('spring-webmvc')), 'Detects vulnerable Spring (Spring4Shell)');
   assert(pomResults.some(r => r.type === 'insecure-repo'), 'Detects HTTP Maven repository');
 
   const gradleResults = await runJavaScan(path.join(FIXTURE_DIR, 'gradle-test'), {});
@@ -470,6 +488,23 @@ async function testJavaScanner() {
 
   const cleanResults = await runJavaScan(path.join(FIXTURE_DIR, 'java-clean'), {});
   assert(cleanResults.length === 0, 'Clean Java project produces no findings');
+
+  writeFixture('java-fastjson/pom.xml', '<project><dependencies><dependency><groupId>com.alibaba</groupId><artifactId>fastjson</artifactId><version>1.2.83</version></dependency></dependencies></project>');
+  writeFixture('java-fastjson-fixed/pom.xml', '<project><dependencies><dependency><groupId>com.alibaba</groupId><artifactId>fastjson</artifactId><version>1.2.84</version></dependency></dependencies></project>');
+  const fastjsonFindings = await runJavaScan(path.join(FIXTURE_DIR, 'java-fastjson'), {});
+  assert(fastjsonFindings.some(r => r.advisory === 'CVE-2026-16723'), 'Detects fastjson 1.2.83 RCE');
+  assert(!(await runJavaScan(path.join(FIXTURE_DIR, 'java-fastjson-fixed'), {})).some(r => r.package === 'com.alibaba:fastjson'), 'Does not flag fixed fastjson 1.2.84');
+
+  writeFixture('java-fastjson-old/pom.xml', '<project><dependencies><dependency><groupId>com.alibaba</groupId><artifactId>fastjson</artifactId><version>1.2.24</version></dependency></dependencies></project>');
+  assert((await runJavaScan(path.join(FIXTURE_DIR, 'java-fastjson-old'), {})).some(r => r.advisory === 'CVE-2017-18349'), 'Detects fastjson 1.2.24 RCE');
+
+  writeFixture('java-log4j-215/pom.xml', '<project><dependencies><dependency><groupId>org.apache.logging.log4j</groupId><artifactId>log4j-core</artifactId><version>2.15.0</version></dependency></dependencies></project>');
+  const log4j215 = await runJavaScan(path.join(FIXTURE_DIR, 'java-log4j-215'), {});
+  assert(log4j215.some(r => r.advisory === 'CVE-2021-45046') && !log4j215.some(r => r.advisory.includes('44228')), 'Log4j 2.15.0 gets its actual follow-on CVE');
+
+  writeFixture('java-two-declarations/pom.xml', '<project><dependencies><dependency><groupId>org.apache.logging.log4j</groupId><artifactId>log4j-core</artifactId><version>2.14.1</version></dependency></dependencies></project>');
+  writeFixture('java-two-declarations/build.gradle', "implementation 'org.apache.logging.log4j:log4j-core:2.17.1'\n");
+  assert((await runJavaScan(path.join(FIXTURE_DIR, 'java-two-declarations'), {})).some(r => r.advisory.includes('Log4Shell')), 'A safe Gradle copy does not hide vulnerable Maven declaration');
 
   const emptyResults = await runJavaScan(path.join(FIXTURE_DIR, 'clean-project'), {});
   assert(emptyResults.length === 0, 'Non-Java project produces no findings');
@@ -482,6 +517,9 @@ async function testRubyScanner() {
   assert(results.some(r => r.package === 'rest-client'), 'Detects compromised rest-client gem');
   assert(results.some(r => r.package === 'actionmailer-text' && r.type === 'typosquat'), 'Detects Ruby typosquat');
   assert(results.some(r => r.type === 'insecure-source'), 'Detects HTTP gem source');
+
+  writeFixture('ruby-rest-client-early/Gemfile.lock', 'GEM\n  specs:\n    rest-client (1.6.10)\n');
+  assert((await runRubyScan(path.join(FIXTURE_DIR, 'ruby-rest-client-early'), {})).some(r => r.advisory === 'CVE-2019-15224'), 'Detects all compromised rest-client releases, including 1.6.10');
 
   const cleanResults = await runRubyScan(path.join(FIXTURE_DIR, 'ruby-clean'), {});
   assert(cleanResults.length === 0, 'Clean Ruby project produces no findings');
@@ -572,6 +610,11 @@ async function testGoScanner() {
   assert(results.some(r => r.package && r.package.includes('golang.org/x/text')), 'Detects vulnerable golang.org/x/text');
   assert(results.some(r => r.type === 'local-replace'), 'Detects local replace directive');
 
+  writeFixture('go-gogo-fixed/go.mod', 'module example.com/fixed\nrequire github.com/gogo/protobuf v1.3.2\n');
+  writeFixture('go-gogo-old/go.mod', 'module example.com/old\nrequire github.com/gogo/protobuf v1.3.1\n');
+  assert((await runGoScan(path.join(FIXTURE_DIR, 'go-gogo-old'), {})).some(r => r.advisory === 'CVE-2021-3121'), 'Detects vulnerable gogo/protobuf');
+  assert(!(await runGoScan(path.join(FIXTURE_DIR, 'go-gogo-fixed'), {})).some(r => r.advisory === 'CVE-2021-3121'), 'Does not flag fixed gogo/protobuf 1.3.2');
+
   const cleanResults = await runGoScan(path.join(FIXTURE_DIR, 'go-clean'), {});
   assert(cleanResults.length === 0, 'Clean Go project produces no findings');
 
@@ -586,6 +629,14 @@ async function testDotnetScanner() {
   assert(results.some(r => r.package === 'Newtonsoft.Json'), 'Detects vulnerable Newtonsoft.Json');
   assert(results.some(r => r.package === 'log4net'), 'Detects vulnerable log4net');
   assert(results.some(r => r.package === 'System.Net.Http'), 'Detects vulnerable System.Net.Http');
+
+  writeFixture('dotnet-advisory-fixed/Test.csproj', '<Project><PackageReference Include="log4net" Version="2.0.10" /><PackageReference Include="Microsoft.Data.OData" Version="5.8.4" /></Project>');
+  const fixedFindings = await runDotnetScan(path.join(FIXTURE_DIR, 'dotnet-advisory-fixed'), {});
+  assert(!fixedFindings.some(r => ['log4net', 'Microsoft.Data.OData'].includes(r.package)), 'Patched log4net and OData releases are not flagged');
+
+  writeFixture('dotnet-two-projects/A.csproj', '<Project><PackageReference Include="log4net" Version="2.0.9" /></Project>');
+  writeFixture('dotnet-two-projects/B.csproj', '<Project><PackageReference Include="log4net" Version="2.0.10" /></Project>');
+  assert((await runDotnetScan(path.join(FIXTURE_DIR, 'dotnet-two-projects'), {})).some(r => r.package === 'log4net' && r.version === '2.0.9'), 'Patched project does not hide vulnerable package in another project');
 
   const cleanResults = await runDotnetScan(path.join(FIXTURE_DIR, 'dotnet-clean'), {});
   assert(cleanResults.length === 0, 'Clean .NET project produces no findings');
@@ -603,6 +654,150 @@ async function testGitScanner() {
 
   const emptyResults = await runGitScan(path.join(FIXTURE_DIR, 'clean-project'), {});
   assert(emptyResults.length === 0, 'Non-git project produces no findings');
+}
+
+async function testActionsScanner() {
+  console.log('\n  \x1b[1m⚙️  GitHub Actions Scanner Tests\x1b[0m\n');
+
+  const sha = 'a'.repeat(40);
+  writeFixture('actions-test/.github/workflows/ci.yml', [
+    'on: [push, pull_request]',
+    'jobs:',
+    '  build:',
+    '    runs-on: ubuntu-latest',
+    '    steps:',
+    '      - uses: actions/checkout@v4',
+    `      - uses: some-org/deploy-action@${sha} # v2.0.0`,
+    '      - uses: some-org/lint-action@main',
+    '      - uses: aquasecurity/trivy-action@0.28.0',
+    '      - uses: aquasecurity/trivy-action@0.35.0',
+    '      - uses: aquasecurity/trivy-action@v0.35.0',
+    '      - uses: ./local-action',
+    '      - uses: docker://alpine:3.20',
+    '      - name: Greet',
+    '        run: |',
+    '          echo "building"',
+    '          echo "${{ github.event.pull_request.title }}"',
+    '      - name: Safe',
+    '        env:',
+    '          TITLE: ${{ github.event.issue.title }}',
+    '        run: echo "$TITLE" "${{ github.sha }}"',
+    '',
+  ].join('\n'));
+  writeFixture('actions-test/.github/workflows/pr-target.yaml', [
+    'on:',
+    '  pull_request_target:',
+    'jobs:',
+    '  test:',
+    '    runs-on: ubuntu-latest',
+    '    steps:',
+    `      - uses: actions/checkout@${sha}`,
+    '        with:',
+    '          ref: ${{ github.event.pull_request.head.sha }}',
+    `      - uses: actions-cool/issues-helper@${sha}`,
+    '      - uses: actions/github-script@' + sha,
+    '        with:',
+    '          script: |',
+    '            console.log("${{ github.event.comment.body }}")',
+    '',
+  ].join('\n'));
+
+  const results = await runActionsScan(path.join(FIXTURE_DIR, 'actions-test'), {});
+  const at = (file, type) => results.filter(r => r.file.endsWith(file) && r.type === type);
+
+  assert(!results.some(r => r.type === 'compromised-action' && r.package === 'aquasecurity/trivy-action'),
+    'Restored trivy-action tags are not reported as currently compromised');
+  assert(at('ci.yml', 'action-past-incident').some(r => r.version === '0.28.0' && r.severity === 'medium' && /March 19-20/.test(r.description)),
+    'Old trivy-action tag reports the March 19-20 exposure window (medium)');
+  assert(at('ci.yml', 'unpinned-action').some(r => r.version === '0.28.0'),
+    'Old trivy-action tag is also reported as unpinned');
+  assert(!at('ci.yml', 'action-past-incident').some(r => /0\.35\.0/.test(r.version)),
+    'trivy-action 0.35.0+ has no past-incident finding');
+  assert(!at('ci.yml', 'compromised-action').some(r => /0\.35\.0/.test(r.version)),
+    'trivy-action 0.35.0+ (immutable release) is not reported as compromised');
+  assert(at('ci.yml', 'unpinned-action').some(r => r.version === '0.35.0'),
+    'trivy-action 0.35.0 tag is still reported as unpinned');
+  assert(at('pr-target.yaml', 'compromised-action').some(r => r.severity === 'medium'),
+    'Compromised action pinned to SHA asks for verification (medium)');
+  writeFixture('actions-cool/.github/workflows/triage.yml', 'on: issues\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions-cool/maintain-one-comment@v3\n');
+  const cool = await runActionsScan(path.join(FIXTURE_DIR, 'actions-cool'), {});
+  assert(cool.some(r => r.type === 'compromised-action' && r.package === 'actions-cool/maintain-one-comment' && r.severity === 'critical'),
+    'Never-cleaned actions-cool tag is critical');
+  assert(at('ci.yml', 'unpinned-action').some(r => r.package === 'some-org/lint-action' && r.severity === 'medium'),
+    'Third-party action on a branch is flagged medium');
+  assert(at('ci.yml', 'unpinned-action').some(r => r.package === 'actions/checkout' && r.severity === 'low'),
+    'First-party action on a tag is flagged low');
+  assert(!results.some(r => r.package === 'some-org/deploy-action'), 'SHA-pinned action is not flagged');
+  assert(!results.some(r => /local-action|alpine/.test(r.description)), 'Local and docker:// actions are skipped');
+  assert(at('ci.yml', 'actions-script-injection').length === 1 && at('ci.yml', 'actions-script-injection')[0].line === 17,
+    'Untrusted PR title in a run: block is flagged once, env: indirection is not');
+  assert(at('pr-target.yaml', 'actions-pwn-request').length === 1, 'pull_request_target checkout of PR head is flagged');
+  assert(at('pr-target.yaml', 'actions-script-injection').some(r => r.description.includes('comment.body')),
+    'Untrusted input in github-script script: block is flagged');
+
+  const custom = await runActionsScan(path.join(FIXTURE_DIR, 'actions-test'), {
+    knownCompromised: { actions: ['Some-Org/Lint-Action'] },
+  });
+  assert(custom.some(r => r.type === 'compromised-action' && r.package === 'some-org/lint-action'),
+    'Custom knownCompromised.actions entries are applied (case-insensitive)');
+
+  const emptyResults = await runActionsScan(path.join(FIXTURE_DIR, 'clean-project'), {});
+  assert(emptyResults.length === 0, 'Project without workflows produces no findings');
+}
+
+async function testAdvisoryRanges() {
+  console.log('\n  \x1b[1m📐 Advisory Range & Runtime Tests\x1b[0m\n');
+
+  // Range matcher: inclusive lower bound, exclusive upper bound, unknown forms are null
+  const brotli = { atLeast: '1.0.3', below: '1.2.1' };
+  assert(entryMatches('1.0.3', brotli) === true && entryMatches('1.2.0', brotli) === true, 'Range includes lower bound and versions inside');
+  assert(entryMatches('1.2.1', brotli) === false && entryMatches('1.0.2', brotli) === false, 'Range excludes fix version and versions below atLeast');
+  assert(entryMatches('1.2.0rc1', brotli) === null && entryMatches('1.2.0.post1', brotli) === null, 'Pre/post-release versions are not guessed');
+  assert(entryMatches('1.2.1.0', { below: '1.2.1.0' }) === false && entryMatches('1.2.0.2', { below: '1.2.1.0' }) === true, 'Four-part versions compare correctly');
+
+  // PyPI: ranges apply to exact pins and lockfiles only
+  writeFixture('pypi-ranges/requirements.txt', 'jeIlyfish==0.1\nBrotli==1.1.0\nbrotlicffi==1.2.1.0\npillow>=10.0\nlitellm==1.107.0\n');
+  writeFixture('pypi-ranges/poetry.lock', '[[package]]\nname = "pillow"\nversion = "12.3.0"\n');
+  const py = await runPythonScan(path.join(FIXTURE_DIR, 'pypi-ranges'), {});
+  assert(py.some(r => r.type === 'vulnerable-pypi' && r.package === 'brotli' && r.advisory.includes('CVE-2026-111497')), 'Pinned Brotli 1.1.0 flagged for CVE-2026-111497');
+  assert(!py.some(r => r.package === 'brotlicffi'), 'Fixed brotlicffi 1.2.1.0 is not flagged');
+  assert(py.filter(r => r.type === 'vulnerable-pypi' && r.package === 'pillow').length === 3, 'Locked Pillow 12.3.0 flagged for all three CVEs');
+  assert(py.some(r => r.type === 'compromised-pypi' && r.package === 'litellm'), 'Compromised litellm 1.107.0 flagged');
+  assert(py.some(r => r.type === 'compromised-pypi' && r.package === 'jeilyfish'), 'Mixed-case jeIlyfish typosquat now matches');
+  writeFixture('pypi-unpinned/requirements.txt', 'pillow>=10.0\n');
+  const unpinned = await runPythonScan(path.join(FIXTURE_DIR, 'pypi-unpinned'), {});
+  assert(unpinned.some(r => r.type === 'version-not-verified' && r.severity === 'low') && !unpinned.some(r => r.type === 'vulnerable-pypi'),
+    'Unpinned Pillow is reported as not verified, never as vulnerable');
+
+  // npm: corrected node-ipc versions and new 2026 seeds
+  const lock = (deps) => JSON.stringify({ name: 'x', version: '1.0.0', lockfileVersion: 3, packages: Object.fromEntries([['', { name: 'x', version: '1.0.0' }],
+    ...Object.entries(deps).map(([n, v]) => [`node_modules/${n}`, { version: v, resolved: `https://registry.npmjs.org/${n}/-/x.tgz`, integrity: 'sha512-a' }])]) });
+  writeFixture('npm-2026/package.json', '{"name":"x","version":"1.0.0"}');
+  writeFixture('npm-2026/package-lock.json', lock({ 'node-ipc': '12.0.1', tensorlake: '0.5.144', '@subql/common': '5.8.3', 'function-flag': '2.3.7' }));
+  const npm2026 = await runSupplyChainScan(path.join(FIXTURE_DIR, 'npm-2026'), {});
+  for (const name of ['node-ipc', 'tensorlake', '@subql/common', 'function-flag']) {
+    assert(npm2026.some(r => r.type === 'compromised-package' && r.package === name), `Detects compromised npm ${name}`);
+  }
+  for (const v of ['10.1.3', '11.0.0', '11.1.0']) {
+    writeFixture(`npm-ipc-${v}/package.json`, '{"name":"x","version":"1.0.0"}');
+    writeFixture(`npm-ipc-${v}/package-lock.json`, lock({ 'node-ipc': v, tensorlake: '0.5.143', '@subql/common': '5.8.2' }));
+    const clean = await runSupplyChainScan(path.join(FIXTURE_DIR, `npm-ipc-${v}`), {});
+    assert(!clean.some(r => r.type === 'compromised-package'), `node-ipc ${v} (with clean tensorlake/subql) is not flagged`);
+  }
+
+  // Node.js runtime (Node2Shell)
+  writeFixture('node-runtime/Dockerfile', 'FROM node:24.22.0-alpine AS build\nFROM node:24.22.1-bookworm-slim\nFROM node:22\nFROM node:20.19.0\nFROM node:lts\nFROM nodered/node-red:4\n');
+  writeFixture('node-runtime/.nvmrc', 'v26.12.0\n');
+  const node = await runSupplyChainScan(path.join(FIXTURE_DIR, 'node-runtime'), {});
+  const nodeAt = (line) => node.filter(r => r.file === 'Dockerfile' && r.line === line);
+  assert(nodeAt(1).some(r => r.type === 'node-runtime-vulnerable'), 'node:24.22.0-alpine flagged as unpatched');
+  assert(nodeAt(2).length === 0, 'node:24.22.1-bookworm-slim (patched) not flagged');
+  assert(nodeAt(3).some(r => r.type === 'node-runtime-unverified' && r.severity === 'medium'), 'Floating node:22 reported as unverified');
+  assert(nodeAt(4).some(r => r.type === 'node-runtime-vulnerable' && /end-of-life/.test(r.description)), 'Node 20 reported as end-of-life');
+  assert(nodeAt(5).some(r => r.type === 'node-runtime-unverified'), 'node:lts reported as unverified');
+  assert(nodeAt(6).length === 0, 'Non-official node images are ignored');
+  assert(node.some(r => r.file === '.nvmrc' && r.type === 'node-runtime-vulnerable'), '.nvmrc v26.12.0 flagged as unpatched dev pin');
+  assert(!node.some(r => r.type === 'missing-lockfile'), 'Node runtime check alone does not imply an npm project');
 }
 
 // ===== MAIN =====
@@ -625,6 +820,8 @@ async function main() {
     await testPhpScanner();
     await testDotnetScanner();
     await testGitScanner();
+    await testActionsScanner();
+    await testAdvisoryRanges();
     await testCrossScannerRegressions();
   } finally {
     cleanup();

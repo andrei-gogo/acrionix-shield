@@ -1,6 +1,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { redactUrl } = require('../redact');
+const { entryMatches } = require('../version-range');
+const { runNodeRuntimeCheck } = require('./node-runtime');
 
 // Known compromised packages — maintained list
 // Format: { "package-name": [{ version, advisory, description, severity }] }
@@ -134,11 +136,18 @@ const KNOWN_COMPROMISED = {
       severity: 'high',
     },
   ],
+  // 10.1.3 is the patched release; 11.x is clean
   'node-ipc': [
     {
-      versions: ['10.1.1', '10.1.2', '10.1.3', '11.0.0', '11.1.0'],
+      versions: ['10.1.1', '10.1.2'],
       advisory: 'GHSA-97m3-w2cp-4xx6',
       description: 'Protest-ware: overwrites files on systems with Russian/Belarusian IPs',
+      severity: 'critical',
+    },
+    {
+      versions: ['9.1.6', '9.2.3', '12.0.1'],
+      advisory: 'node-ipc 2026 compromise (StepSecurity)',
+      description: 'Malicious releases published in the 2026 node-ipc supply chain attack',
       severity: 'critical',
     },
   ],
@@ -148,6 +157,137 @@ const KNOWN_COMPROMISED = {
       advisory: 'Protest-ware dependency of node-ipc',
       description: 'Creates files on desktop as political protest',
       severity: 'high',
+    },
+  ],
+  // Tensorlake (Oct 8 2026) — malicious 0.5.144 published with valid provenance; 0.5.143 and earlier unaffected
+  'tensorlake': [
+    {
+      versions: ['0.5.144'],
+      advisory: 'GHSA-8g63-53c9-65j2',
+      description: 'Compromised release with credential-stealing worm (spreads via stolen npm tokens)',
+      severity: 'critical',
+    },
+  ],
+  'tensorlake-native-darwin-arm64': [
+    {
+      versions: ['0.5.144'],
+      advisory: 'GHSA-8g63-53c9-65j2',
+      description: 'Compromised release with credential-stealing worm (spreads via stolen npm tokens)',
+      severity: 'critical',
+    },
+  ],
+  'tensorlake-native-linux-arm64-gnu': [
+    {
+      versions: ['0.5.144'],
+      advisory: 'GHSA-8g63-53c9-65j2',
+      description: 'Compromised release with credential-stealing worm (spreads via stolen npm tokens)',
+      severity: 'critical',
+    },
+  ],
+  'tensorlake-native-linux-arm64-musl': [
+    {
+      versions: ['0.5.144'],
+      advisory: 'GHSA-8g63-53c9-65j2',
+      description: 'Compromised release with credential-stealing worm (spreads via stolen npm tokens)',
+      severity: 'critical',
+    },
+  ],
+  'tensorlake-native-linux-x64-gnu': [
+    {
+      versions: ['0.5.144'],
+      advisory: 'GHSA-8g63-53c9-65j2',
+      description: 'Compromised release with credential-stealing worm (spreads via stolen npm tokens)',
+      severity: 'critical',
+    },
+  ],
+  'tensorlake-native-linux-x64-musl': [
+    {
+      versions: ['0.5.144'],
+      advisory: 'GHSA-8g63-53c9-65j2',
+      description: 'Compromised release with credential-stealing worm (spreads via stolen npm tokens)',
+      severity: 'critical',
+    },
+  ],
+  'tensorlake-native-win32-x64': [
+    {
+      versions: ['0.5.144'],
+      advisory: 'GHSA-8g63-53c9-65j2',
+      description: 'Compromised release with credential-stealing worm (spreads via stolen npm tokens)',
+      severity: 'critical',
+    },
+  ],
+  // SubQuery (Oct 5 2026) — 5.8.2 and the 5.8.3 prerelease are clean
+  '@subql/common': [
+    {
+      versions: ['5.8.3'],
+      advisory: 'MAL-2026-17571 (StepSecurity)',
+      description: 'Compromised release published through a modified publish workflow',
+      severity: 'critical',
+    },
+  ],
+  // MALFEX campaign (Checkmarx, Oct 2026) — three payload paths; exact malicious releases only
+  'function-flag': [
+    {
+      versions: ['1.7.3', '4.0.0', '3.0.0', '2.3.5', '2.3.6', '2.3.7', '2.3.8', '2.3.9'],
+      advisory: 'MALFEX (Checkmarx)',
+      description: 'Malware: postinstall downloads and runs a Windows node.exe payload',
+      severity: 'critical',
+    },
+  ],
+  'function-color': [
+    {
+      versions: ['1.7.3', '1.0.0'],
+      advisory: 'MALFEX (Checkmarx)',
+      description: 'Malware: wraps function-flag, which downloads and runs a Windows payload',
+      severity: 'critical',
+    },
+  ],
+  'cdn-img-fetch': [
+    {
+      versions: ['1.0.0', '1.0.1', '1.0.2', '1.0.3'],
+      advisory: 'MALFEX (Checkmarx)',
+      description: 'Malware: part of the movinlike information-stealer chain',
+      severity: 'critical',
+    },
+  ],
+  'img-to-native': [
+    {
+      versions: ['1.0.0', '1.0.1', '1.0.2', '1.0.3'],
+      advisory: 'MALFEX (Checkmarx)',
+      description: 'Malware: part of the movinlike information-stealer chain',
+      severity: 'critical',
+    },
+  ],
+  'native-runner': [
+    {
+      versions: ['1.0.0', '1.0.1', '1.0.2', '1.0.3'],
+      advisory: 'MALFEX (Checkmarx)',
+      description: 'Malware: part of the movinlike information-stealer chain',
+      severity: 'critical',
+    },
+  ],
+  'tlxbnhd': [
+    {
+      versions: ['0.0.1'],
+      advisory: 'MALFEX (Checkmarx)',
+      description: 'Malware: Overlord RAT loader',
+      severity: 'critical',
+    },
+  ],
+  'tldriver': [
+    {
+      versions: ['0.0.1'],
+      advisory: 'MALFEX (Checkmarx)',
+      description: 'Malware: Overlord RAT loader',
+      severity: 'critical',
+    },
+  ],
+  'mxdriver': [
+    {
+      versions: ['0.0.1', '0.0.2'],
+      advisory: 'MALFEX (Checkmarx)',
+      description: 'Malware: Overlord RAT loader',
+      severity: 'critical',
     },
   ],
 };
@@ -267,10 +407,6 @@ function parseLockfile(dir) {
   return { type: null, deps: {} };
 }
 
-function versionMatch(version, targetVersions) {
-  if (targetVersions.includes('*')) return true;
-  return targetVersions.includes(version);
-}
 
 async function runSupplyChainScan(dir, config = {}) {
   const findings = [];
@@ -279,6 +415,8 @@ async function runSupplyChainScan(dir, config = {}) {
     Object.entries(config.knownCompromised || {}).filter(([, entries]) => Array.isArray(entries))
   );
   const allCompromised = { ...KNOWN_COMPROMISED, ...npmOverrides };
+
+  findings.push(...runNodeRuntimeCheck(dir));
 
   // Parse lockfile
   const lockfile = parseLockfile(dir);
@@ -324,7 +462,7 @@ async function runSupplyChainScan(dir, config = {}) {
     const compromisedEntries = allCompromised[name];
     if (compromisedEntries) {
       for (const entry of compromisedEntries) {
-        if (versionMatch(info.version, entry.versions)) {
+        if (entryMatches(info.version, entry)) {
           findings.push({
             type: 'compromised-package',
             severity: entry.severity,

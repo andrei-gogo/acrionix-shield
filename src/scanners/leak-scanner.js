@@ -1,6 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { redactSecret } = require('../redact');
+const { PROVIDER_SECRET_PATTERNS } = require('../secret-patterns');
 
 // Dangerous file patterns that should never be in an npm package
 const DANGEROUS_FILES = [
@@ -42,16 +43,10 @@ const SENSITIVE_CONTENT_PATTERNS = [
   { pattern: /(?:api[_-]?key|apikey)\s*[:=]\s*['"][a-z0-9]{20,}['"]/gi, description: 'Hardcoded API key', severity: 'critical' },
   { pattern: /(?:secret|password|passwd|pwd)\s*[:=]\s*['"][^'"]{8,}['"]/gi, description: 'Hardcoded secret/password', severity: 'critical' },
   { pattern: /(?:access[_-]?token|auth[_-]?token)\s*[:=]\s*['"][a-z0-9._-]{20,}['"]/gi, description: 'Hardcoded access token', severity: 'critical' },
-  { pattern: /-----BEGIN (?:RSA |EC |DSA )?PRIVATE KEY-----/g, description: 'Embedded private key', severity: 'critical' },
   { pattern: /-----BEGIN CERTIFICATE-----/g, description: 'Embedded certificate', severity: 'medium', public: true },
   { pattern: /\/\/# sourceMappingURL=.+\.map/g, description: 'Source map reference', severity: 'high', public: true },
   { pattern: /\/\/#\s*sourceURL=/g, description: 'Source URL directive', severity: 'high', public: true },
-  { pattern: /(?:AKIA|ASIA)[A-Z0-9]{16}/g, description: 'AWS Access Key ID', severity: 'critical' },
-  { pattern: /ghp_[A-Za-z0-9_]{36}/g, description: 'GitHub Personal Access Token', severity: 'critical' },
-  { pattern: /npm_[A-Za-z0-9]{36}/g, description: 'npm access token', severity: 'critical' },
-  { pattern: /sk-[a-zA-Z0-9]{48}/g, description: 'OpenAI API key', severity: 'critical' },
-  { pattern: /sk-ant-[a-zA-Z0-9-]{20,}/g, description: 'Anthropic API key', severity: 'critical' },
-  { pattern: /xox[bporas]-[0-9]{10,}-[a-zA-Z0-9-]+/g, description: 'Slack token', severity: 'critical' },
+  ...PROVIDER_SECRET_PATTERNS,
 ];
 
 // Internal path patterns that indicate source code exposure

@@ -1,48 +1,74 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const { entryMatches } = require('../version-range');
 
 // Known compromised Maven/Gradle packages
 const COMPROMISED_JAVA = {
   'log4j-core': [
-    { versions: ['2.0-beta9', '2.0-rc1', '2.0-rc2', '2.0', '2.0.1', '2.0.2', '2.1', '2.2', '2.3', '2.4', '2.4.1', '2.5', '2.6', '2.6.1', '2.6.2', '2.7', '2.8', '2.8.1', '2.8.2', '2.9.0', '2.9.1', '2.10.0', '2.11.0', '2.11.1', '2.11.2', '2.12.0', '2.12.1', '2.13.0', '2.13.1', '2.13.2', '2.13.3', '2.14.0', '2.14.1', '2.15.0', '2.16.0'],
+    { versions: ['2.0-beta9', '2.0-rc1', '2.0-rc2', '2.0', '2.0.1', '2.0.2', '2.1', '2.2', '2.3', '2.4', '2.4.1', '2.5', '2.6', '2.6.1', '2.6.2', '2.7', '2.8', '2.8.1', '2.8.2', '2.9.0', '2.9.1', '2.10.0', '2.11.0', '2.11.1', '2.11.2', '2.12.0', '2.12.1', '2.13.0', '2.13.1', '2.13.2', '2.13.3', '2.14.0', '2.14.1'],
       advisory: 'CVE-2021-44228 (Log4Shell)',
       description: 'Remote code execution via JNDI lookup injection — one of the most critical vulnerabilities ever discovered',
       severity: 'critical' },
+    { versions: ['2.15.0'], advisory: 'CVE-2021-45046', description: 'Incomplete Log4Shell fix in certain configurations', severity: 'critical' },
+    { versions: ['2.16.0'], advisory: 'CVE-2021-45105', description: 'Denial of service via recursive lookup in certain configurations', severity: 'high' },
   ],
   'commons-collections': [
-    { versions: ['3.0', '3.1', '3.2', '3.2.1'],
+    { below: '3.2.2',
       advisory: 'CVE-2015-6420',
       description: 'Deserialization vulnerability enabling remote code execution',
       severity: 'critical' },
   ],
-  'spring-core': [
-    { versions: ['5.3.0', '5.3.1', '5.3.2', '5.3.3', '5.3.4', '5.3.5', '5.3.6', '5.3.7', '5.3.8', '5.3.9', '5.3.10', '5.3.11', '5.3.12', '5.3.13', '5.3.14', '5.3.15', '5.3.16', '5.3.17'],
-      advisory: 'CVE-2022-22965 (Spring4Shell)',
-      description: 'Remote code execution via data binding on JDK 9+',
-      severity: 'critical' },
+  'spring-webmvc': [
+    { atLeast: '5.2.0', below: '5.2.20', advisory: 'CVE-2022-22965 (Spring4Shell)', description: 'Potential RCE via data binding; exploit requires JDK 9+, WAR deployment and a vulnerable servlet container', severity: 'high' },
+    { atLeast: '5.3.0', below: '5.3.18', advisory: 'CVE-2022-22965 (Spring4Shell)', description: 'Potential RCE via data binding; exploit requires JDK 9+, WAR deployment and a vulnerable servlet container', severity: 'high' },
+  ],
+  'spring-webflux': [
+    { atLeast: '5.2.0', below: '5.2.20', advisory: 'CVE-2022-22965 (Spring4Shell)', description: 'Potential RCE via data binding; exploit requires JDK 9+, WAR deployment and a vulnerable servlet container', severity: 'high' },
+    { atLeast: '5.3.0', below: '5.3.18', advisory: 'CVE-2022-22965 (Spring4Shell)', description: 'Potential RCE via data binding; exploit requires JDK 9+, WAR deployment and a vulnerable servlet container', severity: 'high' },
   ],
   'jackson-databind': [
-    { versions: ['2.6.0', '2.6.1', '2.6.2', '2.6.3', '2.6.4', '2.6.5', '2.6.6', '2.6.7', '2.7.0', '2.7.1', '2.7.2', '2.7.3', '2.7.4', '2.7.5', '2.7.6', '2.7.7', '2.7.8', '2.7.9', '2.8.0', '2.8.1', '2.8.2', '2.8.3', '2.8.4', '2.8.5', '2.8.6', '2.8.7', '2.8.8', '2.8.9', '2.8.10', '2.8.11', '2.9.0', '2.9.1', '2.9.2', '2.9.3', '2.9.4', '2.9.5', '2.9.6', '2.9.7', '2.9.8', '2.9.9'],
-      advisory: 'CVE-2017-7525',
-      description: 'Deserialization vulnerability — multiple CVEs across versions',
-      severity: 'high' },
+    { below: '2.6.7.1', advisory: 'CVE-2017-7525', description: 'Unsafe polymorphic deserialization when default typing is enabled', severity: 'critical' },
+    { atLeast: '2.7.0', below: '2.7.9.1', advisory: 'CVE-2017-7525', description: 'Unsafe polymorphic deserialization when default typing is enabled', severity: 'critical' },
+    { atLeast: '2.8.0', below: '2.8.9', advisory: 'CVE-2017-7525', description: 'Unsafe polymorphic deserialization when default typing is enabled', severity: 'critical' },
   ],
   'struts2-core': [
-    { versions: ['2.0.0', '2.0.1', '2.0.2', '2.0.3', '2.0.4', '2.0.5', '2.0.6', '2.0.8', '2.0.9', '2.0.11', '2.0.12', '2.0.14', '2.1.2', '2.1.6', '2.1.8', '2.2.1', '2.2.3', '2.3.1', '2.3.4', '2.3.7', '2.3.8', '2.3.12', '2.3.14', '2.3.16', '2.3.20', '2.3.24', '2.3.28', '2.3.30', '2.3.31', '2.3.32', '2.5.0', '2.5.1', '2.5.2', '2.5.5', '2.5.10'],
+    { atLeast: '2.3.5', below: '2.3.32',
+      advisory: 'CVE-2017-5638',
+      description: 'Remote code execution via Content-Type header (Equifax breach vector)',
+      severity: 'critical' },
+    { atLeast: '2.5.0', below: '2.5.10.1',
       advisory: 'CVE-2017-5638',
       description: 'Remote code execution via Content-Type header (Equifax breach vector)',
       severity: 'critical' },
   ],
   'fastjson': [
-    { versions: ['*'],
-      advisory: 'Multiple CVEs',
-      description: 'Alibaba fastjson — multiple deserialization RCE vulnerabilities across all versions',
+    { below: '1.2.25',
+      advisory: 'CVE-2017-18349',
+      description: 'Remote code execution when parsing crafted untrusted JSON',
+      severity: 'critical' },
+    { atLeast: '1.2.25', below: '1.2.68',
+      advisory: 'CVE-2022-25845',
+      description: 'Unsafe deserialization when parsing untrusted JSON',
       severity: 'high' },
+    { atLeast: '1.2.68', below: '1.2.84',
+      advisory: 'CVE-2026-16723',
+      description: 'Remote code execution when parsing untrusted JSON; fixed in 1.2.84',
+      severity: 'critical' },
   ],
 };
 
+const ADVISORY_GROUPS = {
+  'log4j-core': 'org.apache.logging.log4j',
+  'commons-collections': 'commons-collections',
+  'spring-webmvc': 'org.springframework',
+  'spring-webflux': 'org.springframework',
+  'jackson-databind': 'com.fasterxml.jackson.core',
+  'struts2-core': 'org.apache.struts',
+  fastjson: 'com.alibaba',
+};
+
 function parsePomXml(dir) {
-  const deps = {};
+  const deps = [];
   const pomPath = path.join(dir, 'pom.xml');
   if (!fs.existsSync(pomPath)) return deps;
 
@@ -53,18 +79,19 @@ function parsePomXml(dir) {
   let match;
   while ((match = depRegex.exec(content))) {
     const name = match[2];
-    deps[name] = {
+    deps.push({
+      name,
       groupId: match[1],
       version: match[3] || '*',
       source: 'pom.xml',
-    };
+    });
   }
 
   return deps;
 }
 
 function parseBuildGradle(dir) {
-  const deps = {};
+  const deps = [];
 
   for (const filename of ['build.gradle', 'build.gradle.kts']) {
     const filePath = path.join(dir, filename);
@@ -76,30 +103,27 @@ function parseBuildGradle(dir) {
     const singleQuote = /(?:implementation|api|compile|runtimeOnly|testImplementation)\s+['"]([^:'"]+):([^:'"]+):([^'"]+)['"]/g;
     let match;
     while ((match = singleQuote.exec(content))) {
-      deps[match[2]] = {
+      deps.push({
+        name: match[2],
         groupId: match[1],
         version: match[3],
         source: filename,
-      };
+      });
     }
 
     // Match: implementation("group:artifact:version")
     const parenStyle = /(?:implementation|api|compile|runtimeOnly|testImplementation)\(["']([^:'"]+):([^:'"]+):([^'"]+)["']\)/g;
     while ((match = parenStyle.exec(content))) {
-      deps[match[2]] = {
+      deps.push({
+        name: match[2],
         groupId: match[1],
         version: match[3],
         source: filename,
-      };
+      });
     }
   }
 
   return deps;
-}
-
-function versionInRange(version, targetVersions) {
-  if (targetVersions.includes('*')) return true;
-  return targetVersions.includes(version);
 }
 
 async function runJavaScan(dir, config = {}) {
@@ -107,15 +131,17 @@ async function runJavaScan(dir, config = {}) {
 
   const pomDeps = parsePomXml(dir);
   const gradleDeps = parseBuildGradle(dir);
-  const allDeps = { ...pomDeps, ...gradleDeps };
+  const allDeps = [...pomDeps, ...gradleDeps];
 
-  if (Object.keys(allDeps).length === 0) return findings;
+  if (allDeps.length === 0) return findings;
 
-  for (const [name, info] of Object.entries(allDeps)) {
+  for (const info of allDeps) {
+    const name = info.name;
+    if (info.groupId !== ADVISORY_GROUPS[name]) continue;
     const compromised = COMPROMISED_JAVA[name];
     if (compromised) {
       for (const entry of compromised) {
-        if (versionInRange(info.version, entry.versions)) {
+        if (entryMatches(info.version, entry) === true) {
           findings.push({
             type: 'compromised-java',
             severity: entry.severity,

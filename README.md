@@ -6,7 +6,7 @@
 
 > If you find this useful, please give it a star on GitHub — it helps others discover the project and keeps us motivated to improve it!
 
-**Pre-publish security scanner — catches source leaks, leaked secrets and known-bad dependencies across seven dependency ecosystems, plus Docker and git history checks.**
+**Pre-publish security scanner — catches source leaks, leaked secrets and known-bad dependencies across seven dependency ecosystems, plus Node.js/PHP runtime, Docker, git history and GitHub Actions checks.**
 
 Built by [Acrionix Technologies](https://acrionix.com) in response to the [Anthropic/Claude Code source leak](https://www.cnbc.com/2026/03/31/anthropic-leak-claude-code-internal-source.html) and the [axios supply chain attack](https://socket.dev/blog/axios-supply-chain-attack) of March 2026.
 
@@ -35,20 +35,21 @@ That's it. No config needed.
 - `.map` source map files that expose your source code
 - `.env`, `.pem`, `.key` files with secrets
 - Cloud storage URLs (AWS S3, Google Cloud, Azure Blob, **Cloudflare R2**)
-- Hardcoded API keys (AWS, GitHub, npm, OpenAI, Anthropic, Slack)
+- Hardcoded secrets and provider keys: AWS, GitHub, npm, OpenAI, Anthropic, Slack, Stripe, SendGrid, Square, Google, and database URLs with credentials (22 provider formats, shared with the git scanner)
 - Embedded private keys and certificates
 - Internal file paths (`/Users/...`, `C:\Users\...`)
 - `sourceMappingURL` references in compiled code
 - Missing `.npmignore` or `files` field warnings
 
 ### Supply Chain Scanner
-- **Known compromised packages** (axios, event-stream, ua-parser-js, coa, rc, colors, faker, node-ipc, and more)
+- **Known compromised packages** (axios, event-stream, ua-parser-js, coa, rc, colors, faker, node-ipc, tensorlake, @subql/common, the MALFEX packages, and more)
 - **Typosquatting detection** (catches `axois` instead of `axios`, `1odash` instead of `lodash`)
 - **Suspicious registries** (packages resolved from non-standard URLs)
 - **Missing integrity hashes** in lockfiles
 - Supports `package-lock.json`, classic Yarn v1 `yarn.lock`, and `pnpm-lock.yaml` (Yarn Berry lockfiles are not parsed yet)
 - Every installed copy is checked, so a safe nested copy cannot hide a vulnerable top-level one
 - Registry URLs in findings are shown as scheme, host and path only — credentials, query string and fragment are removed
+- **Node.js runtime (Node2Shell, CVE-2026-111497):** official `node` images in Dockerfile/compose, `.nvmrc`, `.node-version` and `.tool-versions` are checked against the fixed releases 22.23.4, 24.22.1 and 26.12.1. Lines before 22 and odd lines (23, 25) are end-of-life. Floating tags such as `node:22` or `node:lts` are reported as unverified, because the patch level depends on when the image was pulled. `engines.node` ranges are not evaluated.
 
 ### Dependency Ecosystems
 
@@ -57,11 +58,11 @@ Offline, curated rules for seven dependency ecosystems:
 | Ecosystem | Files read | Checks |
 |---|---|---|
 | npm | `package-lock.json`, `yarn.lock` (v1), `pnpm-lock.yaml` | Compromised packages, typosquats, registries, integrity |
-| Python / PyPI | `requirements.txt`, `Pipfile.lock`, `poetry.lock`, `pip.conf` / `pip.ini` | Compromised packages, typosquats, insecure pip config |
-| Java | `pom.xml`, `build.gradle` | Log4Shell, Spring4Shell, Struts2, jackson-databind, fastjson |
-| .NET / NuGet | `.csproj`, `.fsproj`, `.vbproj`, `packages.config` | Known-vulnerable package versions |
-| Ruby | `Gemfile`, `Gemfile.lock` | Hijacked gems, typosquats, HTTP sources |
-| Go | `go.mod` (`go.sum` only without `go.mod`) | Known-vulnerable module versions, local `replace` |
+| Python / PyPI | `requirements.txt`, `Pipfile.lock`, `poetry.lock`, `pip.conf` / `pip.ini` | Compromised packages (incl. litellm 1.82.7/1.82.8/1.107.0), known-vulnerable ranges (Brotli/brotlicffi CVE-2026-111497, Pillow < 13.0.0), typosquats, insecure pip config |
+| Java | `pom.xml`, `build.gradle`, `build.gradle.kts` | Curated Log4j, Spring web, Struts, Jackson and fastjson advisories, including fastjson CVE-2026-16723 |
+| .NET / NuGet | `.csproj`, `.fsproj`, `.vbproj`, `packages.config` | Curated NuGet advisory ranges (log4net, Newtonsoft.Json, OData and others) |
+| Ruby | `Gemfile`, `Gemfile.lock` | Curated hijacked gem releases (including rest-client 1.6.10–1.6.13), typosquats, HTTP sources |
+| Go | `go.mod` (`go.sum` only without `go.mod`) | Curated module advisory ranges, local `replace` |
 | PHP | Dockerfile / compose `php` images, `.php-version`, `.tool-versions`, `composer.json`, `composer.lock` | PHP runtime advisories (PHP2Shell), Composer TLS settings, optional custom Composer blocklist |
 
 ### PHP Runtime (PHP2Shell)
@@ -78,8 +79,15 @@ Offline, curated rules for seven dependency ecosystems:
 - Secrets in `ENV`/`ARG`, sensitive files copied into images, insecure `curl`/`wget`/`pip` flags
 
 ### Git
-- Secrets added in the last 50 commits (new files and edits to existing files)
+- Secrets added in the last 50 commits (new files and edits to existing files): 28 rules, the 22 provider formats plus looser ones (Mailgun, Twilio, JWT, Heroku) that would misfire on minified files
 - Sensitive files missing from `.gitignore`
+
+### GitHub Actions
+Reads `.github/workflows/*.yml` and a root `action.yml`:
+- **Critical:** an action whose tags still point at malware: `actions-cool/issues-helper` and `actions-cool/maintain-one-comment` (every tag moved to an imposter commit that steals runner credentials, May 2026; never cleaned up). A SHA pin of these is medium: check the commit is a legitimate release.
+- **Medium (past incident):** `aquasecurity/trivy-action` below 0.35.0 and `aquasecurity/setup-trivy` below 0.2.6 served a credential stealer on March 19-20 2026 ([GHSA-69fq-xp46-6x23](https://github.com/aquasecurity/trivy/security/advisories/GHSA-69fq-xp46-6x23)). The tags have since been restored, so Shield reports the exposure window: if the workflow ran then, rotate its secrets. A repo scan cannot tell whether it did.
+- **High:** untrusted input such as `${{ github.event.pull_request.title }}` interpolated into a `run:` or `github-script` block (script injection), and `pull_request_target` workflows that check out the pull request's code.
+- **Medium / low:** actions pinned to a tag or branch instead of a full commit SHA (low for GitHub's own `actions/*` and `github/*`).
 
 Secret values that the scanners detect are redacted in CLI and JSON output (for example `pass…[redacted 36 chars]`). Redaction applies to detected matches; a secret no rule recognises is not found and therefore not reported at all.
 
@@ -87,10 +95,27 @@ Secret values that the scanners detect are redacted in CLI and JSON output (for 
 
 Acrionix Shield is an offline scanner with curated rules. A clean result means none of its rules matched, not that a project is free of vulnerabilities.
 
-- **No full advisory database.** Ecosystem checks use built-in lists of known-bad versions. The scanner does not query npm, PyPI, Packagist or other advisory feeds, and does not replace `npm audit`, `pip-audit` or `composer audit`.
+- **No full advisory database.** Ecosystem checks use a finite, curated list of high-impact incidents with affected versions or ranges taken from vendor advisories, GHSA/OSV and the original researchers. The scanner works offline and does not query any feed, so new or less-known vulnerabilities are not covered until a release adds them. Run it alongside each ecosystem's own audit:
+
+  | Ecosystem | Full advisory check |
+  |---|---|
+  | npm | `npm audit` |
+  | Python | `pip-audit` |
+  | PHP | `composer audit` |
+  | Ruby | `bundle-audit` |
+  | Go | `govulncheck ./...` |
+  | .NET | `dotnet list package --vulnerable` |
+  | Java | OWASP Dependency-Check or `mvn org.owasp:dependency-check-maven:check` |
+  | Any | [osv-scanner](https://google.github.io/osv-scanner/) |
+
+- **Version ranges** are checked against plain numeric versions; Python requirements need exact pins (`==`) or lockfile versions. A loose requirement like `pillow>=10` is reported as "not verified" (low), never as safe or vulnerable. Pre-release and post-release versions are not compared.
+- **Java / .NET / Ruby / Go parsers:** Java reads direct Maven/Gradle declarations but does not parse Gradle map-style coordinates (`group:`, `name:`, `version:`), resolve property substitutions, transitive dependencies or the final build graph. .NET scans project references but may miss centrally managed package versions. Both check each parsed declaration, even if another file names a patched version of the same package. Ruby prefers `Gemfile.lock` when present. Go reads `go.mod` requirements, which may differ from the build's final selected versions after minimal-version selection and `replace`; Go pseudo-versions outside the few exact seeds are not range-compared. Use the ecosystem audit commands above for resolved dependency checks.
+- **Node.js runtime:** only versions declared in the repo are checked; `engines.node` ranges and runtimes installed another way need `node -v` in the real environment.
 - **Composer:** there is no built-in Composer package blocklist. You can add entries under `knownCompromised.php`. Without `composer.lock`, constraints like `^1.0` are evaluated as ranges; constraints the scanner can't evaluate are reported as "not evaluated".
 - **PHP runtime:** only versions declared in the repo are checked. A server or image that installs PHP another way still needs `php -v` in the real environment. Vendor backports (Debian, Ubuntu, RHEL) are not recognised.
 - **Yarn Berry** (`yarn.lock` v2+) is not parsed.
+- **GitHub Actions** workflows are read line by line, without a YAML parser: flow-style step lists and YAML anchors are not followed, and `pull_request_target` detection covers the whole file.
+- **npm Trusted Publishing** (["SlugFest"](https://bloom.security/blog/slugfest-millions-of-ai-agents-download-exposed-npm-packages)): the affected package list is not public, so there is nothing to block. Maintainers should check that their trusted-publisher repo and workflow are still theirs after renames or transfers. Provenance alone does not prove a release is safe: the malicious tensorlake 0.5.144 had valid provenance.
 
 ## Usage
 
@@ -113,6 +138,7 @@ npx acrionix-shield scan-go
 npx acrionix-shield scan-php
 npx acrionix-shield scan-docker
 npx acrionix-shield scan-git
+npx acrionix-shield scan-actions
 
 # CI mode — exit code 1 on any finding
 npx acrionix-shield check --ci
@@ -142,6 +168,8 @@ jobs:
       - uses: actions/setup-node@v4
       - run: npx acrionix-shield check --ci --severity high
 ```
+
+Shield's own Actions check reports these `@v4` tags as low (unpinned first-party actions). Pin them to a full commit SHA if your policy requires it.
 
 `--severity high` gates the build on high and critical findings only. Medium and low findings (for example a secret in a test fixture, or an unidentified PHP runtime) are hidden by that flag but still deserve review.
 
@@ -187,6 +215,7 @@ Create a `.shieldrc.json` in your project root for custom rules:
         "severity": "critical"
       }
     ],
+    "actions": ["my-org/old-deploy-action"],
     "php": {
       "acme/widget": [
         {
@@ -201,7 +230,7 @@ Create a `.shieldrc.json` in your project root for custom rules:
 }
 ```
 
-Top-level entries in `knownCompromised` are npm packages. Composer packages go under `knownCompromised.php`.
+Top-level entries in `knownCompromised` are npm packages. Composer packages go under `knownCompromised.php`, and GitHub Actions (`owner/repo`, any tag) under `knownCompromised.actions`.
 
 ## Programmatic API
 
@@ -211,7 +240,7 @@ const { runPhpScan, runLeakScan } = require('acrionix-shield');
 const findings = await runPhpScan('/path/to/project');
 ```
 
-Exports: `runLeakScan`, `runSupplyChainScan`, `runPythonScan`, `runJavaScan`, `runDotnetScan`, `runRubyScan`, `runGoScan`, `runPhpScan`, `runDockerScan`, `runGitScan`, `formatResults`.
+Exports: `runLeakScan`, `runSupplyChainScan`, `runPythonScan`, `runJavaScan`, `runDotnetScan`, `runRubyScan`, `runGoScan`, `runPhpScan`, `runDockerScan`, `runGitScan`, `runActionsScan`, `formatResults`.
 
 ## Severity Levels
 

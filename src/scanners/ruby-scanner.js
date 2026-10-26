@@ -4,7 +4,7 @@ const path = require('node:path');
 // Known compromised RubyGems
 const COMPROMISED_GEMS = {
   'rest-client': [
-    { versions: ['1.6.13'], advisory: 'CVE-2019-15224', description: 'Hijacked — backdoor that exfiltrated credentials via pastebin', severity: 'critical' },
+    { versions: ['1.6.10', '1.6.11', '1.6.12', '1.6.13'], advisory: 'CVE-2019-15224', description: 'Hijacked — backdoor that exfiltrated credentials via pastebin', severity: 'critical' },
   ],
   'strong_password': [
     { versions: ['0.0.7'], advisory: 'RubyGems advisory 2019', description: 'Hijacked — backdoor that downloaded malicious code', severity: 'critical' },

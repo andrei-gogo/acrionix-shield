@@ -1,7 +1,7 @@
 {
   "name": "acrionix-shield",
-  "version": "1.1.0",
-  "description": "Pre-publish security scanner — source leaks, redacted secret detection and offline curated dependency rules for npm, Python, Java, .NET, Ruby, Go and PHP, plus Docker and git history checks",
+  "version": "1.2.0",
+  "description": "Pre-publish security scanner — source leaks, redacted secret detection and offline curated dependency rules for npm, Python, Java, .NET, Ruby, Go and PHP, plus Node.js/PHP runtime, Docker, git history and GitHub Actions checks",
   "main": "src/index.js",
   "bin": {
     "acrionix-shield": "src/cli.js"
@@ -31,7 +31,9 @@
     "ruby",
     "go",
     "docker",
-    "git-secrets"
+    "git-secrets",
+    "github-actions",
+    "nodejs"
   ],
   "author": "Acrionix Technologies <contact@acrionix.com> (https://acrionix.com)",
   "license": "MIT",

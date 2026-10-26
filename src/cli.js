@@ -12,6 +12,7 @@ const { runRubyScan } = require('./scanners/ruby-scanner');
 const { runGoScan } = require('./scanners/go-scanner');
 const { runDotnetScan } = require('./scanners/dotnet-scanner');
 const { runPhpScan } = require('./scanners/php-scanner');
+const { runActionsScan } = require('./scanners/actions-scanner');
 const { formatResults, severityColor } = require('./reporter');
 
 const { version } = require('../package.json');
@@ -39,6 +40,8 @@ Commands:
                   settings and custom Composer blocklist (no Packagist advisories)
   scan-docker     Scan Dockerfiles and docker-compose for security issues
   scan-git        Scan git history for leaked secrets
+  scan-actions    Scan GitHub Actions workflows (unpinned/compromised actions,
+                  script injection, pull_request_target checkouts)
 
 Options:
   --dir, -d       Target directory (default: current directory)
@@ -133,12 +136,12 @@ async function main() {
     console.log(BANNER);
   }
 
-  const results = { leaks: [], supplyChain: [], python: [], java: [], dotnet: [], ruby: [], go: [], php: [], docker: [], git: [] };
+  const results = { leaks: [], supplyChain: [], python: [], java: [], dotnet: [], ruby: [], go: [], php: [], docker: [], git: [], actions: [] };
   const severityOrder = { low: 0, medium: 1, high: 2, critical: 3 };
   const minSeverity = severityOrder[options.severity] || 0;
 
   const scanAll = options.command === 'check';
-  const totalSteps = scanAll ? 10 : 1;
+  const totalSteps = scanAll ? 11 : 1;
   let step = 0;
 
   try {
@@ -190,6 +193,11 @@ async function main() {
     if (scanAll || options.command === 'scan-git') {
       if (!options.json) console.log(`  [${++step}/${totalSteps}] Scanning git history for secrets...\n`);
       results.git = await runGitScan(options.dir, config);
+    }
+
+    if (scanAll || options.command === 'scan-actions') {
+      if (!options.json) console.log(`  [${++step}/${totalSteps}] Scanning GitHub Actions workflows...\n`);
+      results.actions = await runActionsScan(options.dir, config);
     }
   } catch (err) {
     console.error(`Error during scan: ${err.message}`);

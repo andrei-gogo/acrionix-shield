@@ -8,6 +8,7 @@ const { runGoScan } = require('./scanners/go-scanner');
 const { runPhpScan } = require('./scanners/php-scanner');
 const { runDockerScan } = require('./scanners/docker-scanner');
 const { runGitScan } = require('./scanners/git-scanner');
+const { runActionsScan } = require('./scanners/actions-scanner');
 const { formatResults } = require('./reporter');
 
 module.exports = {
@@ -21,5 +22,6 @@ module.exports = {
   runPhpScan,
   runDockerScan,
   runGitScan,
+  runActionsScan,
   formatResults,
 };

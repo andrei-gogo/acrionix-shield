@@ -1,34 +1,26 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const { entryMatches } = require('../version-range');
 
 // Known compromised or vulnerable Go modules
 const COMPROMISED_GO = {
-  'github.com/pborman/uuid': [
-    { versions: ['*'], advisory: 'Deprecated', description: 'Deprecated — use github.com/google/uuid instead (pborman/uuid has known issues)', severity: 'medium' },
-  ],
   'github.com/dgrijalva/jwt-go': [
     { versions: ['*'], advisory: 'CVE-2020-26160', description: 'Deprecated — audience claim not verified. Use github.com/golang-jwt/jwt/v5', severity: 'high' },
   ],
   'github.com/miekg/dns': [
-    { versions: ['1.1.25'], advisory: 'CVE-2019-19794', description: 'Insufficient randomness in DNS message IDs', severity: 'high' },
+    { below: '1.1.25', advisory: 'CVE-2019-19794', description: 'Predictable DNS transaction IDs in older releases', severity: 'high' },
   ],
   'github.com/gogo/protobuf': [
-    { versions: ['*'], advisory: 'CVE-2021-3121', description: 'Unmarshaling panic on crafted input — denial of service', severity: 'high' },
+    { below: '1.3.2', advisory: 'CVE-2021-3121', description: 'Unmarshaling panic on crafted input — denial of service', severity: 'high' },
   ],
   'github.com/buger/jsonparser': [
     { versions: ['0.0.0-20180318095312-2cac668e8456'], advisory: 'GHSA advisory', description: 'Infinite loop on malformed JSON', severity: 'medium' },
   ],
-  'golang.org/x/crypto': [
-    { versions: ['0.0.0-20190308221718-c2843e01d9a2', '0.0.0-20191011191535-87dc89f01550', '0.0.0-20200622213623-75b288015ac9'],
-      advisory: 'Multiple CVEs', description: 'Outdated x/crypto with known vulnerabilities — update to latest', severity: 'high' },
-  ],
   'golang.org/x/text': [
-    { versions: ['0.3.0', '0.3.1', '0.3.2', '0.3.3', '0.3.4', '0.3.5', '0.3.6'],
-      advisory: 'CVE-2022-32149', description: 'Denial of service via crafted Accept-Language header', severity: 'high' },
+    { below: '0.3.8', advisory: 'CVE-2022-32149', description: 'Denial of service via crafted Accept-Language header', severity: 'high' },
   ],
   'golang.org/x/net': [
-    { versions: ['0.0.0-20190404232315-eb5bcb51f2a3', '0.0.0-20210226172049-e18ecbb05110', '0.0.0-20220722155237-a158d28d115b'],
-      advisory: 'CVE-2023-44487 (HTTP/2 Rapid Reset)', description: 'HTTP/2 rapid reset attack — denial of service', severity: 'critical' },
+    { versions: ['0.0.0-20220722155237-a158d28d115b'], below: '0.17.0', advisory: 'CVE-2023-44487 (HTTP/2 Rapid Reset)', description: 'HTTP/2 rapid reset attack — denial of service', severity: 'high' },
   ],
 };
 
@@ -83,12 +75,6 @@ function parseGoMod(dir) {
   return deps;
 }
 
-// Exact match against the advisory's explicit version list (0.3.60 is not 0.3.6)
-function versionMatch(version, targets) {
-  if (targets.includes('*')) return true;
-  return targets.includes(version.replace(/\+incompatible$/, ''));
-}
-
 async function runGoScan(dir, config = {}) {
   const findings = [];
 
@@ -103,7 +89,7 @@ async function runGoScan(dir, config = {}) {
     const compromised = COMPROMISED_GO[mod];
     if (compromised) {
       for (const entry of compromised) {
-        if (versionMatch(info.version, entry.versions)) {
+        if (entryMatches(info.version.replace(/\+incompatible$/, ''), entry) === true) {
           findings.push({
             type: 'compromised-go',
             severity: entry.severity,
