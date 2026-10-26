@@ -3,3 +3,5 @@ node_modules/
 *.log
 test/fixtures/
 .env
+CODEX_HANDOFF.md
+scripts/watch-handoff.js
