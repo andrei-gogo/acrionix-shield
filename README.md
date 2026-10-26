@@ -31,10 +31,11 @@ That's it. No config needed.
 
 ### See a real scan
 
-This repository includes an [intentionally vulnerable PHP Dockerfile](https://github.com/andrei-gogo/acrionix-shield/blob/main/examples/php-runtime/Dockerfile). From a clone of the repo, run:
+This repository includes an [intentionally vulnerable PHP Dockerfile](https://github.com/andrei-gogo/acrionix-shield/blob/main/examples/php-runtime/Dockerfile). From a directory outside the Shield checkout, run:
 
 ```bash
-npx acrionix-shield@1.2.1 scan-php --dir examples/php-runtime
+git clone https://github.com/andrei-gogo/acrionix-shield.git
+npx acrionix-shield@1.2.2 scan-php --dir acrionix-shield/examples/php-runtime
 ```
 
 Shield reports the affected runtime and the precise patch to use:
