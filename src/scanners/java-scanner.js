@@ -1,6 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { entryMatches } = require('../version-range');
+const { runJavaRuntimeCheck } = require('./java-runtime');
 
 // Known compromised Maven/Gradle packages
 const COMPROMISED_JAVA = {
@@ -127,13 +128,11 @@ function parseBuildGradle(dir) {
 }
 
 async function runJavaScan(dir, config = {}) {
-  const findings = [];
+  const findings = runJavaRuntimeCheck(dir);
 
   const pomDeps = parsePomXml(dir);
   const gradleDeps = parseBuildGradle(dir);
   const allDeps = [...pomDeps, ...gradleDeps];
-
-  if (allDeps.length === 0) return findings;
 
   for (const info of allDeps) {
     const name = info.name;

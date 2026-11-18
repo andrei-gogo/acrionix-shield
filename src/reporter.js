@@ -75,7 +75,7 @@ function formatResults(results) {
   printSection('SOURCE LEAK SCAN', results.leaks || []);
   printSection('NPM SUPPLY CHAIN', results.supplyChain || []);
   printSection('PYTHON DEPENDENCIES', results.python || []);
-  printSection('JAVA / MAVEN / GRADLE', results.java || []);
+  printSection('JAVA RUNTIME / DEPENDENCIES', results.java || []);
   printSection('.NET / NUGET', results.dotnet || []);
   printSection('RUBY / GEMS', results.ruby || []);
   printSection('GO MODULES', results.go || []);

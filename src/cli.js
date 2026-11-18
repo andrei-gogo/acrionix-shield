@@ -32,7 +32,7 @@ Commands:
   scan-leaks      Scan for source code leaks only
   scan-deps       Scan dependencies for supply chain attacks only
   scan-python     Scan Python dependencies (requirements.txt, Pipfile, poetry)
-  scan-java       Scan Java dependencies (pom.xml, build.gradle)
+  scan-java       Scan Java runtime (Java4Shell) and dependencies
   scan-dotnet     Scan .NET/C# dependencies (.csproj, packages.config)
   scan-ruby       Scan Ruby dependencies (Gemfile, Gemfile.lock)
   scan-go         Scan Go dependencies (go.mod, go.sum)
@@ -161,7 +161,7 @@ async function main() {
     }
 
     if (scanAll || options.command === 'scan-java') {
-      if (!options.json) console.log(`  [${++step}/${totalSteps}] Scanning Java/Maven/Gradle dependencies...\n`);
+      if (!options.json) console.log(`  [${++step}/${totalSteps}] Scanning Java runtime and dependencies...\n`);
       results.java = await runJavaScan(options.dir, config);
     }
 

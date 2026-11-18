@@ -508,6 +508,51 @@ async function testJavaScanner() {
 
   const emptyResults = await runJavaScan(path.join(FIXTURE_DIR, 'clean-project'), {});
   assert(emptyResults.length === 0, 'Non-Java project produces no findings');
+
+  writeFixture('java4shell-old/Dockerfile', 'FROM eclipse-temurin:17.0.20-jre\n');
+  assert((await runJavaScan(path.join(FIXTURE_DIR, 'java4shell-old'))).some(r => r.advisory.includes('CVE-2026-114938') && r.severity === 'high'), 'Detects potentially affected runtime without Maven dependencies');
+  writeFixture('java4shell-before-start/Dockerfile', 'FROM openjdk:17.0.5\n');
+  assert(!(await runJavaScan(path.join(FIXTURE_DIR, 'java4shell-before-start'))).some(r => r.advisory?.includes('CVE-2026-114938')), 'Does not flag OpenJDK before affected 17.0.6');
+  writeFixture('java4shell-java11/Dockerfile', 'FROM eclipse-temurin:11.0.30-jre\n');
+  assert(!(await runJavaScan(path.join(FIXTURE_DIR, 'java4shell-java11'))).some(r => r.advisory?.includes('CVE-2026-114938')), 'Does not flag unaffected OpenJDK 11');
+  writeFixture('java4shell-oracle-fixed/Dockerfile', 'FROM container-registry.oracle.com/java/jdk:17.0.21.1\n');
+  assert(!(await runJavaScan(path.join(FIXTURE_DIR, 'java4shell-oracle-fixed'))).some(r => r.advisory?.includes('CVE-2026-114938')), 'Recognizes confirmed Oracle patched build');
+  writeFixture('java4shell-boundary/Dockerfile', 'FROM amazoncorretto:17.0.21-alpine3.24\n');
+  assert((await runJavaScan(path.join(FIXTURE_DIR, 'java4shell-boundary'))).some(r => r.type === 'java-runtime-unverified'), 'Treats vendor boundary tag as unverified');
+  writeFixture('java4shell-multistage/Dockerfile', 'FROM eclipse-temurin:17.0.20 AS builder\nFROM eclipse-temurin:11.0.30-jre\n');
+  assert(!(await runJavaScan(path.join(FIXTURE_DIR, 'java4shell-multistage'))).some(r => r.advisory?.includes('CVE-2026-114938')), 'Checks final Docker stage, not build stage');
+  writeFixture('java4shell-alias/Dockerfile', 'FROM eclipse-temurin:17.0.20 AS base\nFROM base\n');
+  assert((await runJavaScan(path.join(FIXTURE_DIR, 'java4shell-alias'))).some(r => r.severity === 'high'), 'Resolves final stage alias');
+  writeFixture('java4shell-compose/compose.yaml', 'services:\n  app:\n    image: eclipse-temurin:21.0.12-jre\n');
+  assert((await runJavaScan(path.join(FIXTURE_DIR, 'java4shell-compose'))).some(r => r.severity === 'high'), 'Detects Java runtime in Compose');
+  writeFixture('java4shell-dev/.java-version', '17.0.20\n');
+  assert((await runJavaScan(path.join(FIXTURE_DIR, 'java4shell-dev'))).some(r => r.description.includes('Development version hint')), 'Labels developer Java pin as a hint');
+  writeFixture('java4shell-prerelease/Dockerfile', 'FROM eclipse-temurin:17.0.21.1-rc1\n');
+  assert((await runJavaScan(path.join(FIXTURE_DIR, 'java4shell-prerelease'))).some(r => r.type === 'java-runtime-unverified'), 'Prerelease is unverified, not treated as patched');
+  writeFixture('java4shell-floating/Dockerfile', 'FROM eclipse-temurin:17-jre\n');
+  assert((await runJavaScan(path.join(FIXTURE_DIR, 'java4shell-floating'))).some(r => r.type === 'java-runtime-unverified'), 'Floating Java image is unverified');
+  writeFixture('java4shell-later/Dockerfile', 'FROM eclipse-temurin:17.0.22-jre\n');
+  assert(!(await runJavaScan(path.join(FIXTURE_DIR, 'java4shell-later'))).some(r => r.advisory?.includes('CVE-2026-114938')), 'Later quarterly Temurin release is treated as patched');
+  writeFixture('java4shell-tool-versions/.tool-versions', 'java temurin-17.0.20+8\n');
+  assert((await runJavaScan(path.join(FIXTURE_DIR, 'java4shell-tool-versions'))).some(r => r.severity === 'medium' && r.description.includes('Development version hint')), 'Parses vendor-prefixed asdf Java pin as a medium hint');
+  writeFixture('java4shell-oracle-boundary/Dockerfile', 'FROM container-registry.oracle.com/java/jdk:17.0.21\n');
+  assert((await runJavaScan(path.join(FIXTURE_DIR, 'java4shell-oracle-boundary'))).some(r => r.severity === 'high'), 'Oracle three-part boundary is below its documented fix');
+  writeFixture('java4shell-arm/Dockerfile', 'FROM --platform=linux/arm64 eclipse-temurin:17.0.20-jre\n');
+  assert(!(await runJavaScan(path.join(FIXTURE_DIR, 'java4shell-arm'))).some(r => r.advisory?.includes('CVE-2026-114938')), 'Does not flag explicit ARM64-only image');
+  writeFixture('java4shell-arg/Dockerfile', 'ARG JAVA_IMAGE=eclipse-temurin:17.0.20-jre\nFROM ${JAVA_IMAGE}\n');
+  assert((await runJavaScan(path.join(FIXTURE_DIR, 'java4shell-arg'))).some(r => r.severity === 'high'), 'Resolves Docker ARG default in FROM');
+  writeFixture('java4shell-jlink/Dockerfile', 'FROM eclipse-temurin:17.0.20 AS jre\nFROM debian:12-slim\nCOPY --from=jre /opt/java /opt/java\n');
+  assert((await runJavaScan(path.join(FIXTURE_DIR, 'java4shell-jlink'))).some(r => r.severity === 'medium'), 'Reports copied Java runtime as unverified');
+  writeFixture('java4shell-copy-direct/Dockerfile', 'FROM debian:12-slim\nCOPY --from=eclipse-temurin:17.0.20-jre /opt/java/openjdk /opt/java/openjdk\n');
+  assert((await runJavaScan(path.join(FIXTURE_DIR, 'java4shell-copy-direct'))).some(r => r.severity === 'medium'), 'Finds Java runtime copied directly from an image');
+  writeFixture('java4shell-copy-options/Dockerfile', 'FROM eclipse-temurin:17.0.20 AS jre\nFROM debian:12-slim\nCOPY --chown=app:app --from=jre /opt/java /opt/java\n');
+  assert((await runJavaScan(path.join(FIXTURE_DIR, 'java4shell-copy-options'))).some(r => r.severity === 'medium'), 'Finds copied Java runtime after COPY options');
+  writeFixture('java4shell-eol/Dockerfile', 'FROM eclipse-temurin:22.0.2\n');
+  assert((await runJavaScan(path.join(FIXTURE_DIR, 'java4shell-eol'))).some(r => r.severity === 'high'), 'Flags unsupported Java 22 runtime as potentially affected');
+  writeFixture('java4shell-eol-dev/.java-version', '22.0.2\n');
+  assert((await runJavaScan(path.join(FIXTURE_DIR, 'java4shell-eol-dev'))).some(r => r.severity === 'medium'), 'Keeps unsupported Java developer pin visible as a hint');
+  writeFixture('java4shell-mirror/Dockerfile', 'FROM registry.example.com/eclipse-temurin:17.0.22-jre\n');
+  assert((await runJavaScan(path.join(FIXTURE_DIR, 'java4shell-mirror'))).some(r => r.type === 'java-runtime-unverified'), 'Does not assume a private mirror contains the official patched image');
 }
 
 async function testRubyScanner() {

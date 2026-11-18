@@ -82,11 +82,17 @@ Offline, curated rules for seven dependency ecosystems:
 |---|---|---|
 | npm | `package-lock.json`, `yarn.lock` (v1), `pnpm-lock.yaml` | Compromised packages, typosquats, registries, integrity |
 | Python / PyPI | `requirements.txt`, `Pipfile.lock`, `poetry.lock`, `pip.conf` / `pip.ini` | Compromised packages (incl. litellm 1.82.7/1.82.8/1.107.0), known-vulnerable ranges (Brotli/brotlicffi CVE-2026-111497, Pillow < 13.0.0), typosquats, insecure pip config |
-| Java | `pom.xml`, `build.gradle`, `build.gradle.kts` | Curated Log4j, Spring web, Struts, Jackson and fastjson advisories, including fastjson CVE-2026-16723 |
+| Java | Dockerfile / compose Java images, `.java-version`, `.tool-versions`, `.sdkmanrc`, `pom.xml`, `build.gradle`, `build.gradle.kts` | Java4Shell runtime check plus curated Log4j, Spring web, Struts, Jackson and fastjson advisories |
 | .NET / NuGet | `.csproj`, `.fsproj`, `.vbproj`, `packages.config` | Curated NuGet advisory ranges (log4net, Newtonsoft.Json, OData and others) |
 | Ruby | `Gemfile`, `Gemfile.lock` | Curated hijacked gem releases (including rest-client 1.6.10–1.6.13), typosquats, HTTP sources |
 | Go | `go.mod` (`go.sum` only without `go.mod`) | Curated module advisory ranges, local `replace` |
 | PHP | Dockerfile / compose `php` images, `.php-version`, `.tool-versions`, `composer.json`, `composer.lock` | PHP runtime advisories (PHP2Shell), Composer TLS settings, optional custom Composer blocklist |
+
+### Java Runtime (Java4Shell)
+
+[CVE-2026-114938](https://access.redhat.com/security/vulnerabilities/RHSB-2026-018) affects the Java Base64 decoder on **x86-64 CPUs with AVX-512 VBMI**, when an application decodes attacker-controlled Base64. OpenJDK 17.0.6 and later can be affected; OpenJDK 8/11 and ARM64 are outside this issue. The Oracle [November 2026 update](https://www.oracle.com/security-alerts/cspunov2026.html) and [17.0.21.1 release notes](https://www.oracle.com/java/technologies/javase/17-0-21-1-relnotes.html) document the vendor fix. Other vendors may use different build numbers or backports.
+
+`scan-java` checks recognized Java base images in Dockerfiles and compose files, including final stages that inherit a named stage. It also checks `.java-version`, `.tool-versions` and `.sdkmanrc` as development hints. A **high** container finding means a declared release predates the published fix level; it is **potentially affected**, subject to the deployed vendor build, CPU and application behavior. **Medium** covers development hints, copied runtimes, floating tags and unknown vendor patch levels. Check `java -version` and the vendor advisory on the deployed host. `-XX:-UseBASE64Intrinsics` is a mitigation if a patched build is not yet available.
 
 ### PHP Runtime (PHP2Shell)
 
@@ -133,6 +139,7 @@ Acrionix Shield is an offline scanner with curated rules. A clean result means n
 
 - **Version ranges** are checked against plain numeric versions; Python requirements need exact pins (`==`) or lockfile versions. A loose requirement like `pillow>=10` is reported as "not verified" (low), never as safe or vulnerable. Pre-release and post-release versions are not compared.
 - **Java / .NET / Ruby / Go parsers:** Java reads direct Maven/Gradle declarations but does not parse Gradle map-style coordinates (`group:`, `name:`, `version:`), resolve property substitutions, transitive dependencies or the final build graph. .NET scans project references but may miss centrally managed package versions. Both check each parsed declaration, even if another file names a patched version of the same package. Ruby prefers `Gemfile.lock` when present. Go reads `go.mod` requirements, which may differ from the build's final selected versions after minimal-version selection and `replace`; Go pseudo-versions outside the few exact seeds are not range-compared. Use the ecosystem audit commands above for resolved dependency checks.
+- **Java runtime:** only recognized Java images and version manager files are inspected. Dockerfiles are found in the root and the fixed paths listed by the Docker scanner, not recursively across a monorepo. Images assembled from a system package manager, custom `docker build --target` stages, host-installed JDKs, CPU features, vendor backports and actual Base64 input paths cannot be verified from the repository. A Maven compiler target or Gradle toolchain is not treated as a deployed runtime.
 - **Node.js runtime:** only versions declared in the repo are checked; `engines.node` ranges and runtimes installed another way need `node -v` in the real environment.
 - **Composer:** there is no built-in Composer package blocklist. You can add entries under `knownCompromised.php`. Without `composer.lock`, constraints like `^1.0` are evaluated as ranges; constraints the scanner can't evaluate are reported as "not evaluated".
 - **PHP runtime:** only versions declared in the repo are checked. A server or image that installs PHP another way still needs `php -v` in the real environment. Vendor backports (Debian, Ubuntu, RHEL) are not recognised.
