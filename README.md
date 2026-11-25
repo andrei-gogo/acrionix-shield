@@ -6,7 +6,7 @@
 
 > If you find this useful, please give it a star on GitHub — it helps others discover the project and keeps us motivated to improve it!
 
-**Pre-publish security scanner — catches source leaks, leaked secrets and known-bad dependencies across seven dependency ecosystems, plus Node.js/PHP runtime, Docker, git history and GitHub Actions checks.**
+**Pre-publish security scanner — catches source leaks, leaked secrets and known-bad dependencies across seven dependency ecosystems, plus Node.js/Java/PHP runtime, Docker, git history and GitHub Actions checks.**
 
 Built by [Acrionix Technologies](https://acrionix.com) in response to the [Anthropic/Claude Code source leak](https://www.cnbc.com/2026/03/31/anthropic-leak-claude-code-internal-source.html) and the [axios supply chain attack](https://socket.dev/blog/axios-supply-chain-attack) of March 2026.
 
@@ -35,7 +35,7 @@ This repository includes an [intentionally vulnerable PHP Dockerfile](https://gi
 
 ```bash
 git clone https://github.com/andrei-gogo/acrionix-shield.git
-npx acrionix-shield@1.2.2 scan-php --dir acrionix-shield/examples/php-runtime
+npx acrionix-shield@1.3.1 scan-php --dir acrionix-shield/examples/php-runtime
 ```
 
 Shield reports the affected runtime and the precise patch to use:
@@ -65,7 +65,9 @@ The example contains no real application or secrets. See the [reproduction and f
 - Missing `.npmignore` or `files` field warnings
 
 ### Supply Chain Scanner
-- **Known compromised packages** (axios, event-stream, ua-parser-js, coa, rc, colors, faker, node-ipc, tensorlake, @subql/common, the MALFEX packages, and more)
+- **Known compromised packages** (axios, event-stream, ua-parser-js, keyv/cacheable worm seed releases, node-ipc, tensorlake, @subql/common, the MALFEX packages, and more)
+- **Curated npm vulnerabilities:** React Server Components RCE in affected `react-server-dom-*` 19.x releases and Next.js AVIF optimization RCE in affected `next` releases; findings explain the deployment conditions
+- Advisory sources: [React's RSC advisory](https://github.com/react/react/security/advisories/GHSA-xqc2-xf4c-x3h3), [Next.js AVIF advisory](https://github.com/advisories/GHSA-2xp9-vwfh-vxw4), [agent-framework malware record](https://github.com/advisories/GHSA-764m-3ppc-5m73), and [keyv malware record](https://github.com/advisories/GHSA-3p9h-f68w-m6fx)
 - **Typosquatting detection** (catches `axois` instead of `axios`, `1odash` instead of `lodash`)
 - **Suspicious registries** (packages resolved from non-standard URLs)
 - **Missing integrity hashes** in lockfiles
@@ -80,8 +82,8 @@ Offline, curated rules for seven dependency ecosystems:
 
 | Ecosystem | Files read | Checks |
 |---|---|---|
-| npm | `package-lock.json`, `yarn.lock` (v1), `pnpm-lock.yaml` | Compromised packages, typosquats, registries, integrity |
-| Python / PyPI | `requirements.txt`, `Pipfile.lock`, `poetry.lock`, `pip.conf` / `pip.ini` | Compromised packages (incl. litellm 1.82.7/1.82.8/1.107.0), known-vulnerable ranges (Brotli/brotlicffi CVE-2026-111497, Pillow < 13.0.0), typosquats, insecure pip config |
+| npm | `package-lock.json`, `yarn.lock` (v1), `pnpm-lock.yaml` | Compromised packages, React Server Components and Next.js AVIF RCE ranges, typosquats, registries, integrity |
+| Python / PyPI | `requirements.txt`, `Pipfile.lock`, `poetry.lock`, `pip.conf` / `pip.ini` | Compromised packages (incl. litellm and agent-framework 1.26.1/1.26.2), known-vulnerable ranges (Brotli/brotlicffi CVE-2026-111497, Pillow < 13.0.0), typosquats, insecure pip config |
 | Java | Dockerfile / compose Java images, `.java-version`, `.tool-versions`, `.sdkmanrc`, `pom.xml`, `build.gradle`, `build.gradle.kts` | Java4Shell runtime check plus curated Log4j, Spring web, Struts, Jackson and fastjson advisories |
 | .NET / NuGet | `.csproj`, `.fsproj`, `.vbproj`, `packages.config` | Curated NuGet advisory ranges (log4net, Newtonsoft.Json, OData and others) |
 | Ruby | `Gemfile`, `Gemfile.lock` | Curated hijacked gem releases (including rest-client 1.6.10–1.6.13), typosquats, HTTP sources |
@@ -92,7 +94,7 @@ Offline, curated rules for seven dependency ecosystems:
 
 [CVE-2026-114938](https://access.redhat.com/security/vulnerabilities/RHSB-2026-018) affects the Java Base64 decoder on **x86-64 CPUs with AVX-512 VBMI**, when an application decodes attacker-controlled Base64. OpenJDK 17.0.6 and later can be affected; OpenJDK 8/11 and ARM64 are outside this issue. The Oracle [November 2026 update](https://www.oracle.com/security-alerts/cspunov2026.html) and [17.0.21.1 release notes](https://www.oracle.com/java/technologies/javase/17-0-21-1-relnotes.html) document the vendor fix. Other vendors may use different build numbers or backports.
 
-`scan-java` checks recognized Java base images in Dockerfiles and compose files, including final stages that inherit a named stage. It also checks `.java-version`, `.tool-versions` and `.sdkmanrc` as development hints. A **high** container finding means a declared release predates the published fix level; it is **potentially affected**, subject to the deployed vendor build, CPU and application behavior. **Medium** covers development hints, copied runtimes, floating tags and unknown vendor patch levels. Check `java -version` and the vendor advisory on the deployed host. `-XX:-UseBASE64Intrinsics` is a mitigation if a patched build is not yet available.
+`scan-java` checks recognized Java base images in Dockerfiles and compose files, including final stages that inherit a named stage. It also checks `.java-version`, `.tool-versions` and `.sdkmanrc` as development hints. A **high** container finding means a declared release predates the published fix level; it is **potentially affected**, subject to the deployed vendor build, CPU and application behavior. **Medium** covers development hints, copied runtimes, floating tags, likely Java images from other vendors, and unknown patch levels. Check `java -version` and the vendor advisory on the deployed host. `-XX:-UseBASE64Intrinsics` is a mitigation if a patched build is not yet available; a final Docker stage that declares it in `JAVA_TOOL_OPTIONS`, `JDK_JAVA_OPTIONS` or the Java launch command gets a low finding pending runtime confirmation.
 
 ### PHP Runtime (PHP2Shell)
 
@@ -116,6 +118,7 @@ Reads `.github/workflows/*.yml` and a root `action.yml`:
 - **Critical:** an action whose tags still point at malware: `actions-cool/issues-helper` and `actions-cool/maintain-one-comment` (every tag moved to an imposter commit that steals runner credentials, May 2026; never cleaned up). A SHA pin of these is medium: check the commit is a legitimate release.
 - **Medium (past incident):** `aquasecurity/trivy-action` below 0.35.0 and `aquasecurity/setup-trivy` below 0.2.6 served a credential stealer on March 19-20 2026 ([GHSA-69fq-xp46-6x23](https://github.com/aquasecurity/trivy/security/advisories/GHSA-69fq-xp46-6x23)). The tags have since been restored, so Shield reports the exposure window: if the workflow ran then, rotate its secrets. A repo scan cannot tell whether it did.
 - **High:** untrusted input such as `${{ github.event.pull_request.title }}` interpolated into a `run:` or `github-script` block (script injection), and `pull_request_target` workflows that check out the pull request's code.
+- **High / medium / low:** `toJSON(secrets)` exposing all repository secrets (high), base64 decoded into a shell (medium), or a downloaded script piped into a shell (low). These are generic warning signs seen in [StepSecurity's WFX Phantom investigation](https://www.stepsecurity.io/blog/wfx-phantom-the-github-actions-secret-stealer); a match alone does not establish that the workflow is malicious.
 - **Medium / low:** actions pinned to a tag or branch instead of a full commit SHA (low for GitHub's own `actions/*` and `github/*`).
 
 Secret values that the scanners detect are redacted in CLI and JSON output (for example `pass…[redacted 36 chars]`). Redaction applies to detected matches; a secret no rule recognises is not found and therefore not reported at all.
@@ -138,6 +141,7 @@ Acrionix Shield is an offline scanner with curated rules. A clean result means n
   | Any | [osv-scanner](https://google.github.io/osv-scanner/) |
 
 - **Version ranges** are checked against plain numeric versions; Python requirements need exact pins (`==`) or lockfile versions. A loose requirement like `pillow>=10` is reported as "not verified" (low), never as safe or vulnerable. Pre-release and post-release versions are not compared.
+- **React/Next.js advisories:** lockfile versions can identify affected packages, but Shield cannot establish whether a React app serves Server Components or whether a Next.js deployment optimizes attacker-controlled AVIF images. The RSC rule checks installed `react-server-dom-*` packages; a framework that bundles its own copy, including Next.js, may not expose one in the lockfile. React and Next.js prereleases are reported as unverified.
 - **Java / .NET / Ruby / Go parsers:** Java reads direct Maven/Gradle declarations but does not parse Gradle map-style coordinates (`group:`, `name:`, `version:`), resolve property substitutions, transitive dependencies or the final build graph. .NET scans project references but may miss centrally managed package versions. Both check each parsed declaration, even if another file names a patched version of the same package. Ruby prefers `Gemfile.lock` when present. Go reads `go.mod` requirements, which may differ from the build's final selected versions after minimal-version selection and `replace`; Go pseudo-versions outside the few exact seeds are not range-compared. Use the ecosystem audit commands above for resolved dependency checks.
 - **Java runtime:** only recognized Java images and version manager files are inspected. Dockerfiles are found in the root and the fixed paths listed by the Docker scanner, not recursively across a monorepo. Images assembled from a system package manager, custom `docker build --target` stages, host-installed JDKs, CPU features, vendor backports and actual Base64 input paths cannot be verified from the repository. A Maven compiler target or Gradle toolchain is not treated as a deployed runtime.
 - **Node.js runtime:** only versions declared in the repo are checked; `engines.node` ranges and runtimes installed another way need `node -v` in the real environment.
@@ -145,6 +149,7 @@ Acrionix Shield is an offline scanner with curated rules. A clean result means n
 - **PHP runtime:** only versions declared in the repo are checked. A server or image that installs PHP another way still needs `php -v` in the real environment. Vendor backports (Debian, Ubuntu, RHEL) are not recognised.
 - **Yarn Berry** (`yarn.lock` v2+) is not parsed.
 - **GitHub Actions** workflows are read line by line, without a YAML parser: flow-style step lists and YAML anchors are not followed, and `pull_request_target` detection covers the whole file.
+- **Short-lived CI compromises:** a current checkout cannot reveal a malicious workflow that was pushed, executed, reverted and deleted. Review commit history and Actions run gaps when investigating an incident.
 - **npm Trusted Publishing** (["SlugFest"](https://bloom.security/blog/slugfest-millions-of-ai-agents-download-exposed-npm-packages)): the affected package list is not public, so there is nothing to block. Maintainers should check that their trusted-publisher repo and workflow are still theirs after renames or transfers. Provenance alone does not prove a release is safe: the malicious tensorlake 0.5.144 had valid provenance.
 
 ## Usage

@@ -4,9 +4,31 @@ const { redactUrl } = require('../redact');
 const { entryMatches } = require('../version-range');
 const { runNodeRuntimeCheck } = require('./node-runtime');
 
+// React Server Components RCE requires an RSC-capable server/framework and a
+// crafted request. Plain client-side React is outside this advisory.
+const RSC_RCE = [
+  { atLeast: '19.0.0', below: '19.0.9', fixed: '19.0.9' },
+  { atLeast: '19.1.0', below: '19.1.10', fixed: '19.1.10' },
+  { atLeast: '19.2.0', below: '19.2.9', fixed: '19.2.9' },
+  { atLeast: '19.3.0', below: '19.3.1', fixed: '19.3.1' },
+];
+const RSC_PACKAGES = new Set(['react-server-dom-webpack', 'react-server-dom-parcel', 'react-server-dom-turbopack']);
+const RSC_ADVISORY = 'CVE-2026-126187 / GHSA-xqc2-xf4c-x3h3';
+const NEXT_AVIF_RCE = [
+  { atLeast: '10.0.0', below: '15.5.24', fixed: '15.5.24' },
+  { atLeast: '16.0.0', below: '16.3.3', fixed: '16.3.3' },
+];
+const NEXT_AVIF_ADVISORY = 'GHSA-2xp9-vwfh-vxw4';
+
 // Known compromised packages — maintained list
 // Format: { "package-name": [{ version, advisory, description, severity }] }
 const KNOWN_COMPROMISED = {
+  // Exact August 2026 keyv/cacheable worm seed releases (GitHub reviewed malware advisories)
+  'keyv': [{ versions: ['6.0.0'], advisory: 'GHSA-3p9h-f68w-m6fx', description: 'Malicious release in the keyv/cacheable credential-stealing worm campaign', severity: 'critical' }],
+  'cacheable': [{ versions: ['2.5.1'], advisory: 'GHSA-jpjx-r3gh-v5pf', description: 'Malicious release in the keyv/cacheable credential-stealing worm campaign', severity: 'critical' }],
+  'cache-manager': [{ versions: ['7.2.10'], advisory: 'GHSA-p7m5-96hg-gppj', description: 'Malicious release in the keyv/cacheable credential-stealing worm campaign', severity: 'critical' }],
+  '@cacheable/utils': [{ versions: ['2.5.1'], advisory: 'GHSA-8v3r-r9vg-5r66', description: 'Malicious release in the keyv/cacheable credential-stealing worm campaign', severity: 'critical' }],
+  '@keyv/memcache': [{ versions: ['6.0.0'], advisory: 'GHSA-94wj-9g85-8vc8', description: 'Malicious release in the keyv/cacheable credential-stealing worm campaign', severity: 'critical' }],
   // The axios supply chain attack (March 2026)
   'axios': [
     {
@@ -476,6 +498,66 @@ async function runSupplyChainScan(dir, config = {}) {
         }
       }
     }
+  }
+
+  for (const info of installs) {
+    if (info.name !== 'next') continue;
+    let unverified = false;
+    for (const rule of NEXT_AVIF_RCE) {
+      const affected = entryMatches(info.version, rule);
+      if (affected === null) unverified = true;
+      if (affected !== true) continue;
+      findings.push({
+        type: 'vulnerable-npm',
+        severity: 'critical',
+        file: lockfile.type,
+        package: info.name,
+        version: info.version,
+        advisory: NEXT_AVIF_ADVISORY,
+        description: 'Remote code execution through AVIF image optimization in Next.js when attacker-controlled AVIF files are processed',
+        recommendation: `Upgrade Next.js to ${rule.fixed} or a newer patched release`,
+      });
+    }
+    if (unverified) findings.push({
+      type: 'version-not-verified',
+      severity: 'low',
+      file: lockfile.type,
+      package: info.name,
+      version: info.version,
+      advisory: NEXT_AVIF_ADVISORY,
+      description: 'Next.js prerelease or nonnumeric version could not be compared with the AVIF RCE advisory',
+      recommendation: 'Confirm the installed release against the Next.js security advisory',
+    });
+  }
+
+  for (const info of installs) {
+    if (!RSC_PACKAGES.has(info.name)) continue;
+    let unverified = false;
+    for (const rule of RSC_RCE) {
+      const affected = entryMatches(info.version, rule);
+      if (affected === null) unverified = true;
+      if (affected !== true) continue;
+      findings.push({
+        type: 'vulnerable-npm',
+        severity: 'critical',
+        file: lockfile.type,
+        package: info.name,
+        version: info.version,
+        advisory: RSC_ADVISORY,
+        description: 'Remote code execution from a crafted request in a server using React Server Components; client-only React apps are not exposed',
+        recommendation: `Upgrade ${info.name} to ${rule.fixed} or a newer patched release on the same React line`,
+      });
+    }
+    if (unverified) findings.push({
+      type: 'version-not-verified',
+      severity: 'low',
+      file: lockfile.type,
+      package: info.name,
+      version: info.version,
+      advisory: RSC_ADVISORY,
+      description: 'React Server Components prerelease or nonnumeric version could not be compared with the RCE advisory',
+      recommendation: 'Confirm the installed release against the React security advisory',
+    });
   }
 
   // Check for typosquatting

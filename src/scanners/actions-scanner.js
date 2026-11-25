@@ -48,6 +48,13 @@ const UNTRUSTED_EXPRESSION = new RegExp(
   ')\\s*\\}\\}',
 );
 
+// Serialises every repository secret at once; CI secret stealers (e.g. wfx-loot, Nov 2026) use it to exfiltrate in one step
+const SECRETS_DUMP = /\$\{\{\s*toJSON\s*\(\s*secrets\s*\)\s*\}\}/i;
+
+// Shell code fetched or decoded at run time, then executed without review
+const DECODED_SHELL = /base64\s+(?:-d|--decode|-D)\b[^|]*\|\s*(?:sudo\s+)?(?:ba|z|da)?sh\b/;
+const REMOTE_SHELL = /\b(?:curl|wget)\b[^|]*\|\s*(?:sudo\s+)?(?:ba|z|da)?sh\b/;
+
 const PR_HEAD_REF = /github\.event\.pull_request\.head\.(?:sha|ref)|github\.head_ref|refs\/pull\/[^/\s]*\/(?:head|merge)/;
 
 function findWorkflowFiles(dir) {
@@ -127,11 +134,42 @@ function scanWorkflow(relPath, content, compromised) {
           file: relPath,
           line: lineNo,
           description: `Untrusted input \${{ ${expr[1]} }} is interpolated into a shell/script step`,
-          match: trimmed.substring(0, 120),
+          match: expr[0],
           ecosystem: 'github-actions',
           recommendation: `Pass it through an environment variable instead (env: VALUE: \${{ ${expr[1]} }}) and reference "$VALUE" in the script`,
         });
       }
+
+      const decoded = DECODED_SHELL.test(line);
+      if (decoded || REMOTE_SHELL.test(line)) {
+        findings.push({
+          type: 'actions-remote-script',
+          severity: decoded ? 'medium' : 'low',
+          file: relPath,
+          line: lineNo,
+          description: decoded
+            ? 'Workflow decodes base64 and pipes it into a shell (common obfuscation in CI secret stealers)'
+            : 'Workflow pipes a downloaded script straight into a shell',
+          match: decoded ? 'base64 decode piped to shell' : 'download piped to shell',
+          ecosystem: 'github-actions',
+          recommendation: decoded
+            ? 'Check who added this step (git log -p on the workflow). Decode the payload and review it; if unexpected, remove it and rotate every secret the workflow could read'
+            : 'Download to a file, verify a pinned checksum, then execute it, or use a SHA-pinned action instead',
+        });
+      }
+    }
+
+    if (SECRETS_DUMP.test(line)) {
+      findings.push({
+        type: 'actions-secrets-dump',
+        severity: 'high',
+        file: relPath,
+        line: lineNo,
+        description: 'Workflow serialises all repository secrets with toJSON(secrets)',
+        match: 'toJSON(secrets)',
+        ecosystem: 'github-actions',
+        recommendation: 'Pass only the specific secrets a step needs. Check who added this line (git log -p); if unexpected, treat it as a compromise and rotate every secret',
+      });
     }
 
     // pull_request_target checking out the untrusted PR head
@@ -142,7 +180,7 @@ function scanWorkflow(relPath, content, compromised) {
         file: relPath,
         line: lineNo,
         description: 'pull_request_target workflow checks out code from the pull request head',
-        match: trimmed.substring(0, 120),
+        match: 'pull request head ref',
         ecosystem: 'github-actions',
         recommendation: 'Untrusted PR code runs with repository secrets and a write token. Use the pull_request trigger, or never build/run the checked-out PR code in this workflow',
       });

@@ -20,6 +20,7 @@ function imageInfo(ref) {
   const tag = colon < 0 ? 'latest' : withoutDigest.slice(colon + 1);
   const repoParts = repo.split('/');
   const imageName = repoParts[repoParts.length - 1];
+  // A mirror can carry a vendor's name without carrying its current patched build.
   const trusted = ['openjdk', 'eclipse-temurin', 'amazoncorretto', 'azul/zulu-openjdk', 'container-registry.oracle.com/java/jdk'].includes(repo);
   let vendor = null;
   if (imageName === 'openjdk') vendor = 'openjdk';
@@ -27,6 +28,7 @@ function imageInfo(ref) {
   else if (imageName === 'amazoncorretto') vendor = 'corretto';
   else if (imageName === 'zulu-openjdk') vendor = 'zulu';
   else if (repo === 'container-registry.oracle.com/java/jdk') vendor = 'oracle';
+  else if (/(?:^|[/-])(?:java\d*|jdk\d*|jre\d*|openjdk(?:-\d+)?|liberica|sapmachine)(?:$|[/-])/i.test(repo)) vendor = 'unknown-java';
   return { repo, tag, vendor, trusted, digest: ref.includes('@sha256:') };
 }
 
@@ -70,7 +72,10 @@ function dockerRuntimes(dir) {
     if (isCompose) {
       lines.forEach((line, index) => {
         const match = line.match(/^\s*image:\s*["']?([^\s"'#]+)/i);
-        if (match) found.push({ ref: match[1], file: name, line: index + 1 });
+        if (match) {
+          const defaultImage = match[1].match(/^\$\{[A-Za-z_][A-Za-z_0-9]*:-([^}]+)\}$/);
+          found.push({ ref: defaultImage ? defaultImage[1] : match[1], file: name, line: index + 1 });
+        }
       });
       continue;
     }
@@ -95,7 +100,13 @@ function dockerRuntimes(dir) {
       if (!base) break;
       ref = base.ref;
     }
-    found.push({ ...final, ref });
+    const mitigated = lines.slice(final.index + 1).some(line =>
+      !line.trimStart().startsWith('#') &&
+      /-XX:-UseBASE64Intrinsics\b/.test(line) &&
+      (/^\s*ENV\s+(?:JAVA_TOOL_OPTIONS|JDK_JAVA_OPTIONS)\b/i.test(line) ||
+        /^\s*(?:ENTRYPOINT|CMD)\b.*\bjava\b/i.test(line))
+    );
+    found.push({ ...final, ref, mitigated });
     for (const line of lines.slice(final.index + 1)) {
       const copy = line.match(/^\s*COPY\s+(.+)$/i);
       if (!copy) continue;
@@ -109,7 +120,7 @@ function dockerRuntimes(dir) {
         if (!stage) break;
         source = stage.ref;
       }
-      if (source !== ref && imageInfo(source).vendor) found.push({ ...final, ref: source, derived: true });
+      if (source !== ref && imageInfo(source).vendor) found.push({ ...final, ref: source, derived: true, mitigated });
     }
   }
   return found;
@@ -128,24 +139,25 @@ function runJavaRuntimeCheck(dir) {
     if (candidate.kind === 'image' && !candidate.vendor) continue;
     if (candidate.platform && /(?:^|\/)arm64|aarch64/i.test(candidate.platform)) continue;
     const version = parseJavaVersion(candidate.tag);
-    const status = candidate.derived ? 'unverified' : classify(version, candidate.trusted ? candidate.vendor : 'unknown');
+    const status = candidate.derived || candidate.vendor === 'unknown-java' ? 'unverified' : classify(version, candidate.trusted ? candidate.vendor : 'unknown');
     if (status === 'outside' || status === 'patched') continue;
     // Development version files provide a lead, but cannot establish the deployed version.
     if (candidate.kind === 'dev' && status !== 'potentially-affected') continue;
     const potential = status === 'potentially-affected';
-    const high = potential && candidate.kind === 'image';
+    const high = potential && candidate.kind === 'image' && !candidate.mitigated;
     const unsupported = version && !ORACLE_FIXES[version.parts[0]];
+    const label = candidate.kind === 'image' ? `${candidate.repo}:${candidate.tag}` : candidate.tag;
     findings.push({
       type: potential ? 'java-runtime-potentially-affected' : 'java-runtime-unverified',
-      severity: high ? 'high' : 'medium',
+      severity: candidate.mitigated ? 'low' : high ? 'high' : 'medium',
       file: candidate.file,
       line: candidate.line,
       package: 'java-runtime',
       version: candidate.tag,
       advisory: ADVISORY,
       ecosystem: 'java',
-      description: `${DESCRIPTION}. ${candidate.kind === 'dev' ? 'Development version hint' : candidate.derived ? 'Java runtime copied from a build stage' : 'Container image'} ${candidate.tag} is ${potential ? unsupported ? 'on an unsupported Java line without a listed fix; deployed CPU and application path need verification' : 'below the published Oracle fix level; vendor patch status and deployed CPU need verification' : 'not enough to verify its patch status'}`,
-      recommendation: `Check java -version and your vendor advisory on the deployed host; ${unsupported ? 'migrate to a supported, patched Java line' : `use a patched vendor build (Oracle baseline: ${Object.entries(ORACLE_FIXES).map(([major, fix]) => `${major}: ${fix}`).join(', ')})`} or disable Base64 intrinsics with -XX:-UseBASE64Intrinsics`,
+      description: `${DESCRIPTION}. ${candidate.kind === 'dev' ? 'Development version hint' : candidate.derived ? 'Java runtime copied from a build stage' : 'Container image'} ${label} is ${potential ? unsupported ? 'on an unsupported Java line without a listed fix; deployed CPU and application path need verification' : 'below the published Oracle fix level; vendor patch status and deployed CPU need verification' : 'not enough to verify its patch status'}${candidate.mitigated ? '. The final Docker stage declares -XX:-UseBASE64Intrinsics; verify that it reaches the JVM' : ''}`,
+      recommendation: candidate.mitigated ? 'Confirm the mitigation flag is active on the deployed JVM and upgrade to a patched vendor build' : `Check java -version and your vendor advisory on the deployed host; ${unsupported ? 'migrate to a supported, patched Java line' : `use a patched vendor build (Oracle baseline: ${Object.entries(ORACLE_FIXES).map(([major, fix]) => `${major}: ${fix}`).join(', ')})`} or disable Base64 intrinsics with -XX:-UseBASE64Intrinsics`,
     });
   }
   return findings;

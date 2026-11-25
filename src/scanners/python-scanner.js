@@ -20,6 +20,7 @@ const COMPROMISED_PYPI = {
   'requessts': [{ versions: ['*'], advisory: 'MAL-2022-7438', description: 'Malicious typosquat of requests', severity: 'critical' }],
   // Hijacked release pipeline; earlier 1.82.x releases were also malicious
   'litellm': [{ versions: ['1.82.7', '1.82.8', '1.107.0'], advisory: 'GHSA-92x9-889m-jgmw', description: 'Compromised release — credential stealer and backdoor run at interpreter startup', severity: 'critical' }],
+  'agent-framework': [{ versions: ['1.26.1', '1.26.2'], advisory: 'MAL-2026-20101 / GHSA-764m-3ppc-5m73', description: 'Compromised wheels run a credential stealer at Python startup via a .pth hook', severity: 'critical', recommendation: 'Remove the malicious release and rotate credentials available to the affected environment' }],
 };
 
 // Known-vulnerable version ranges (inclusive atLeast, exclusive below).
@@ -170,7 +171,7 @@ async function runPythonScan(dir, config = {}) {
             description: entry.description,
             advisory: entry.advisory,
             ecosystem: 'python',
-            recommendation: `URGENT: Remove or replace ${name} immediately`,
+            recommendation: entry.recommendation || `URGENT: Remove or replace ${name} immediately`,
           });
         }
       }
