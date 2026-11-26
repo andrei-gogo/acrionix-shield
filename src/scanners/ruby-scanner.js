@@ -1,5 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const { runRubyRuntimeCheck } = require('./ruby-runtime');
 
 // Known compromised RubyGems
 const COMPROMISED_GEMS = {
@@ -84,7 +85,7 @@ function parseGemfile(dir) {
 }
 
 async function runRubyScan(dir, config = {}) {
-  const findings = [];
+  const findings = runRubyRuntimeCheck(dir);
 
   const lockDeps = parseGemfileLock(dir);
   const gemfileDeps = parseGemfile(dir);

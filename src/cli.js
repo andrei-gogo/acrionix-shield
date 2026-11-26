@@ -34,7 +34,7 @@ Commands:
   scan-python     Scan Python dependencies (requirements.txt, Pipfile, poetry)
   scan-java       Scan Java runtime (Java4Shell) and dependencies
   scan-dotnet     Scan .NET/C# dependencies (.csproj, packages.config)
-  scan-ruby       Scan Ruby dependencies (Gemfile, Gemfile.lock)
+  scan-ruby       Scan Ruby runtime and dependencies (Docker, Gemfile, Gemfile.lock)
   scan-go         Scan Go dependencies (go.mod, go.sum)
   scan-php        Check declared PHP runtime version (PHP2Shell), Composer TLS
                   settings and custom Composer blocklist (no Packagist advisories)

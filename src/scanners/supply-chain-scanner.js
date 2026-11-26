@@ -19,6 +19,13 @@ const NEXT_AVIF_RCE = [
   { atLeast: '16.0.0', below: '16.3.3', fixed: '16.3.3' },
 ];
 const NEXT_AVIF_ADVISORY = 'GHSA-2xp9-vwfh-vxw4';
+const MONGOOSE_SANITIZE_FILTER = [
+  { below: '6.13.11', fixed: '6.13.11' },
+  { atLeast: '7.0.0', below: '7.8.12', fixed: '7.8.12' },
+  { atLeast: '8.0.0', below: '8.24.3', fixed: '8.24.3' },
+  { atLeast: '9.0.0', below: '9.9.2', fixed: '9.9.2' },
+];
+const MONGOOSE_ADVISORY = 'CVE-2026-125120 / GHSA-pcrw-h46h-c93h';
 
 // Known compromised packages — maintained list
 // Format: { "package-name": [{ version, advisory, description, severity }] }
@@ -389,18 +396,23 @@ function parseLockfile(dir) {
       let current = null;
 
       for (const line of lines) {
-        const pkgMatch = line.match(/^"?(@?[^@\s"]+)@/);
-        if (pkgMatch && !line.startsWith(' ')) {
-          currentPkg = pkgMatch[1];
+        // Yarn Classic uses `version "1.0.0"`; Berry uses `version: 1.0.0`.
+        // Take the first descriptor in a key containing several selectors.
+        const pkgMatch = line.match(/^["']?((?:@[^/\s"']+\/)?[^@\s"',]+)@(?:npm:)?[^\s:,]+.*:\s*$/);
+        if (pkgMatch && !/^\s/.test(line)) {
+          const aliasTarget = line.match(/@npm:((?:@[^/\s"']+\/)?[^@\s"',]+)@/);
+          currentPkg = aliasTarget ? aliasTarget[1] : pkgMatch[1];
           current = null;
         }
-        if (currentPkg && line.match(/^\s+version\s+"?([^"\s]+)/)) {
-          const version = line.match(/^\s+version\s+"?([^"\s]+)/)[1];
+        const versionMatch = currentPkg && line.match(/^\s+version:?\s+["']?([^"'\s]+)/);
+        if (versionMatch) {
+          const version = versionMatch[1];
           current = { name: currentPkg, version };
           deps[`${currentPkg}@${version}`] = current;
         }
-        if (current && line.match(/^\s+resolved\s+"?([^"\s]+)/)) {
-          current.resolved = line.match(/^\s+resolved\s+"?([^"\s]+)/)[1];
+        const resolvedMatch = current && line.match(/^\s+resolved:?\s+["']?([^"'\s]+)/);
+        if (resolvedMatch) {
+          current.resolved = resolvedMatch[1];
         }
       }
 
@@ -415,10 +427,16 @@ function parseLockfile(dir) {
   if (fs.existsSync(pnpmLockPath)) {
     try {
       const content = fs.readFileSync(pnpmLockPath, 'utf8');
-      const pkgRegex = /\/(@?[^@\s:]+)@([^:\s(]+)/g;
-      let match;
-      while ((match = pkgRegex.exec(content))) {
-        deps[`${match[1]}@${match[2]}`] = { name: match[1], version: match[2] };
+      let inPackages = false;
+      for (const line of content.split(/\r?\n/)) {
+        if (/^packages:\s*$/.test(line)) { inPackages = true; continue; }
+        if (/^\S/.test(line)) inPackages = false;
+        if (!inPackages) continue;
+        // v6 keys start with /; v9 keys do not. Ignore peer suffixes.
+        const match = line.match(/^\s{2}["']?\/?((?:@[^/\s@]+\/)?[^@\s:'"]+)@([^\s:'"(]+)(?:\(.*\))?["']?:\s*$/);
+        if (match) {
+          deps[`${match[1]}@${match[2]}`] = { name: match[1], version: match[2] };
+        }
       }
       return { type: 'pnpm-lock.yaml', deps };
     } catch (err) {
@@ -527,6 +545,28 @@ async function runSupplyChainScan(dir, config = {}) {
       advisory: NEXT_AVIF_ADVISORY,
       description: 'Next.js prerelease or nonnumeric version could not be compared with the AVIF RCE advisory',
       recommendation: 'Confirm the installed release against the Next.js security advisory',
+    });
+  }
+
+  for (const info of installs) {
+    if (info.name !== 'mongoose') continue;
+    let unverified = false;
+    for (const rule of MONGOOSE_SANITIZE_FILTER) {
+      const affected = entryMatches(info.version, rule);
+      if (affected === null) unverified = true;
+      if (affected !== true) continue;
+      findings.push({
+        type: 'vulnerable-npm', severity: 'critical', file: lockfile.type,
+        package: info.name, version: info.version, advisory: MONGOOSE_ADVISORY,
+        description: 'Mongoose sanitizeFilter is bypassed for countDocuments() queries; exposure requires use of sanitizeFilter with untrusted filter input',
+        recommendation: `Upgrade Mongoose to ${rule.fixed} or a newer patched release on the same major line`,
+      });
+    }
+    if (unverified) findings.push({
+      type: 'version-not-verified', severity: 'low', file: lockfile.type,
+      package: info.name, version: info.version, advisory: MONGOOSE_ADVISORY,
+      description: 'Mongoose prerelease or nonnumeric version could not be compared with the advisory',
+      recommendation: 'Confirm the installed release against the Mongoose security advisory',
     });
   }
 

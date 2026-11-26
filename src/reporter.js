@@ -77,7 +77,7 @@ function formatResults(results) {
   printSection('PYTHON DEPENDENCIES', results.python || []);
   printSection('JAVA RUNTIME / DEPENDENCIES', results.java || []);
   printSection('.NET / NUGET', results.dotnet || []);
-  printSection('RUBY / GEMS', results.ruby || []);
+  printSection('RUBY RUNTIME / GEMS', results.ruby || []);
   printSection('GO MODULES', results.go || []);
   printSection('PHP / COMPOSER', results.php || []);
   printSection('DOCKER SECURITY', results.docker || []);

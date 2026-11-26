@@ -35,7 +35,7 @@ This repository includes an [intentionally vulnerable PHP Dockerfile](https://gi
 
 ```bash
 git clone https://github.com/andrei-gogo/acrionix-shield.git
-npx acrionix-shield@1.3.1 scan-php --dir acrionix-shield/examples/php-runtime
+npx acrionix-shield@1.3.2 scan-php --dir acrionix-shield/examples/php-runtime
 ```
 
 Shield reports the affected runtime and the precise patch to use:
@@ -104,6 +104,14 @@ Offline, curated rules for seven dependency ecosystems:
 - **High (unverified):** floating tags like `php:8.4-apache` or `php:latest`, prerelease or unrecognised tags
 - **Medium (unverified):** a deployable app (`"type": "project"` or a Dockerfile) with no `php` base image. `.php-version`, `.tool-versions` and `config.platform.php` are development hints and never prove the deployed runtime is patched.
 
+### Ruby Runtime
+
+[GHSA-3p8q-wmhx-vm2w](https://github.com/ruby/ruby/security/advisories/GHSA-3p8q-wmhx-vm2w) is a critical heap buffer overflow in Ruby's regular expression compiler. Applications that compile attacker-controlled patterns may allow remote code execution. Ruby 3.3.14, 3.4.13 and 4.0.10 contain the fix. `scan-ruby` checks official `ruby` images in Dockerfiles and compose files, plus `.ruby-version` and `.tool-versions` as development hints. Exact affected image versions are critical; floating tags and development hints need runtime verification. Confirm the deployed interpreter with `ruby -v`.
+
+### Mongoose
+
+[CVE-2026-125120](https://github.com/advisories/GHSA-pcrw-h46h-c93h) affects Mongoose's `countDocuments()` calls when an application relies on `sanitizeFilter` for untrusted filter input. `scan-deps` checks installed versions in npm, Yarn and pnpm lockfiles. Upgrade to 6.13.11, 7.8.12, 8.24.3 or 9.9.2 on the corresponding major line.
+
 ### Docker
 - Unpinned or `latest` base images, containers running as root
 - Privileged mode, host network or PID namespace in compose files
@@ -147,7 +155,8 @@ Acrionix Shield is an offline scanner with curated rules. A clean result means n
 - **Node.js runtime:** only versions declared in the repo are checked; `engines.node` ranges and runtimes installed another way need `node -v` in the real environment.
 - **Composer:** there is no built-in Composer package blocklist. You can add entries under `knownCompromised.php`. Without `composer.lock`, constraints like `^1.0` are evaluated as ranges; constraints the scanner can't evaluate are reported as "not evaluated".
 - **PHP runtime:** only versions declared in the repo are checked. A server or image that installs PHP another way still needs `php -v` in the real environment. Vendor backports (Debian, Ubuntu, RHEL) are not recognised.
-- **Yarn Berry** (`yarn.lock` v2+) is not parsed.
+- **Yarn and pnpm:** common Yarn Classic/Berry and pnpm v6/v9 package entries are read, but unusual aliases, peer resolution variants and workspace layouts may be missed. Use `npm audit` or another ecosystem audit against the resolved install as well.
+- **Ruby runtime:** only official `ruby` images and version manager files are inspected. Custom images, package-manager installations and images assembled by copying a Ruby binary require `ruby -v` in the deployed environment.
 - **GitHub Actions** workflows are read line by line, without a YAML parser: flow-style step lists and YAML anchors are not followed, and `pull_request_target` detection covers the whole file.
 - **Short-lived CI compromises:** a current checkout cannot reveal a malicious workflow that was pushed, executed, reverted and deleted. Review commit history and Actions run gaps when investigating an incident.
 - **npm Trusted Publishing** (["SlugFest"](https://bloom.security/blog/slugfest-millions-of-ai-agents-download-exposed-npm-packages)): the affected package list is not public, so there is nothing to block. Maintainers should check that their trusted-publisher repo and workflow are still theirs after renames or transfers. Provenance alone does not prove a release is safe: the malicious tensorlake 0.5.144 had valid provenance.

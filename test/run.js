@@ -629,6 +629,25 @@ async function testRubyScanner() {
 
   const emptyResults = await runRubyScan(path.join(FIXTURE_DIR, 'clean-project'), {});
   assert(emptyResults.length === 0, 'Non-Ruby project produces no findings');
+
+  writeFixture('ruby-runtime-vulnerable/Dockerfile', 'FROM ruby:3.4.12-slim\n');
+  assert((await runRubyScan(path.join(FIXTURE_DIR, 'ruby-runtime-vulnerable'))).some(r => r.advisory === 'GHSA-3p8q-wmhx-vm2w' && r.severity === 'critical'), 'Detects Ruby regex compiler RCE in an official runtime image without a Gemfile');
+  writeFixture('ruby-runtime-patched/Dockerfile', 'FROM ruby:3.4.13-slim\n');
+  assert(!(await runRubyScan(path.join(FIXTURE_DIR, 'ruby-runtime-patched'))).some(r => r.advisory === 'GHSA-3p8q-wmhx-vm2w'), 'Does not flag patched Ruby runtime image');
+  writeFixture('ruby-runtime-variant/Dockerfile', 'FROM ruby:3.3.13-slim-bookworm\n');
+  assert((await runRubyScan(path.join(FIXTURE_DIR, 'ruby-runtime-variant'))).some(r => r.type === 'ruby-runtime-vulnerable'), 'Parses combined official Ruby image variants');
+  writeFixture('ruby-runtime-floating/compose.yaml', 'services:\n  app:\n    image: ruby:3.4\n');
+  assert((await runRubyScan(path.join(FIXTURE_DIR, 'ruby-runtime-floating'))).some(r => r.type === 'ruby-runtime-unverified'), 'Flags floating Ruby tag as unverified');
+  writeFixture('ruby-runtime-compose-default/compose.yaml', 'services:\n  app:\n    image: ${RUBY_IMAGE:-ruby:4.0.9}\n');
+  assert((await runRubyScan(path.join(FIXTURE_DIR, 'ruby-runtime-compose-default'))).some(r => r.type === 'ruby-runtime-vulnerable'), 'Checks Compose Ruby image default');
+  writeFixture('ruby-runtime-compose-tag-default/compose.yaml', 'services:\n  app:\n    image: ruby:${RUBY_VERSION:-3.3.13}\n');
+  assert((await runRubyScan(path.join(FIXTURE_DIR, 'ruby-runtime-compose-tag-default'))).some(r => r.type === 'ruby-runtime-vulnerable'), 'Checks Compose Ruby tag default');
+  writeFixture('ruby-runtime-arg/Dockerfile', 'ARG RUBY_VERSION=3.3.13\nFROM docker.io/library/ruby:$RUBY_VERSION-slim AS base\nFROM base\n');
+  assert((await runRubyScan(path.join(FIXTURE_DIR, 'ruby-runtime-arg'))).some(r => r.type === 'ruby-runtime-vulnerable'), 'Resolves Ruby ARG in final Docker stage');
+  writeFixture('ruby-runtime-dev-prefix/.ruby-version', 'ruby-3.4.13\n');
+  assert(!(await runRubyScan(path.join(FIXTURE_DIR, 'ruby-runtime-dev-prefix'))).some(r => r.advisory === 'GHSA-3p8q-wmhx-vm2w'), 'Recognizes patched ruby- prefixed version pin');
+  writeFixture('ruby-runtime-dev/.ruby-version', '3.3.13\n');
+  assert((await runRubyScan(path.join(FIXTURE_DIR, 'ruby-runtime-dev'))).some(r => r.severity === 'medium'), 'Treats Ruby version file as a deployment hint');
 }
 
 async function testPhpScanner() {
@@ -917,6 +936,19 @@ async function testAdvisoryRanges() {
     const clean = await runSupplyChainScan(path.join(FIXTURE_DIR, `npm-ipc-${v}`), {});
     assert(!clean.some(r => r.type === 'compromised-package'), `node-ipc ${v} (with clean tensorlake/subql) is not flagged`);
   }
+
+  writeFixture('mongoose-vulnerable/package-lock.json', lock({ mongoose: '8.24.2' }));
+  assert((await runSupplyChainScan(path.join(FIXTURE_DIR, 'mongoose-vulnerable'))).some(r => r.advisory?.includes('CVE-2026-125120') && r.severity === 'critical'), 'Detects Mongoose sanitizeFilter bypass');
+  writeFixture('mongoose-patched/package-lock.json', lock({ mongoose: '8.24.3' }));
+  assert(!(await runSupplyChainScan(path.join(FIXTURE_DIR, 'mongoose-patched'))).some(r => r.advisory?.includes('CVE-2026-125120')), 'Does not flag patched Mongoose');
+  writeFixture('yarn-berry/yarn.lock', '__metadata:\n  version: 8\n"@keyv/memcache@npm:^6.0.0":\n  version: 6.0.0\n  resolution: "@keyv/memcache@npm:6.0.0"\n');
+  assert((await runSupplyChainScan(path.join(FIXTURE_DIR, 'yarn-berry'))).some(r => r.package === '@keyv/memcache' && r.type === 'compromised-package'), 'Parses scoped Yarn Berry packages');
+  writeFixture('yarn-alias/yarn.lock', '"alias@npm:mongoose@^8.0.0":\n  version: 8.24.2\n  resolution: "mongoose@npm:8.24.2"\n');
+  assert((await runSupplyChainScan(path.join(FIXTURE_DIR, 'yarn-alias'))).some(r => r.package === 'mongoose' && r.advisory?.includes('CVE-2026-125120')), 'Checks Yarn alias against underlying package');
+  writeFixture('pnpm-v9/pnpm-lock.yaml', 'lockfileVersion: 9.0\npackages:\n  keyv@6.0.0:\n    resolution: {integrity: sha512-x}\n  \'@keyv/memcache@6.0.0\':\n    resolution: {integrity: sha512-y}\n');
+  assert((await runSupplyChainScan(path.join(FIXTURE_DIR, 'pnpm-v9'))).filter(r => r.type === 'compromised-package').length === 2, 'Parses unscoped and scoped pnpm v9 packages');
+  writeFixture('pnpm-v6-peers/pnpm-lock.yaml', 'lockfileVersion: \'6.0\'\npackages:\n  /mongoose@8.24.2(supports-color@8.1.1)(aws-sdk@2.0.0):\n    resolution: {integrity: sha512-x}\n');
+  assert((await runSupplyChainScan(path.join(FIXTURE_DIR, 'pnpm-v6-peers'))).some(r => r.package === 'mongoose' && r.advisory?.includes('CVE-2026-125120')), 'Checks pnpm v6 package with multiple peer suffixes');
 
   // Node.js runtime (Node2Shell)
   writeFixture('node-runtime/Dockerfile', 'FROM node:24.22.0-alpine AS build\nFROM node:24.22.1-bookworm-slim\nFROM node:22\nFROM node:20.19.0\nFROM node:lts\nFROM nodered/node-red:4\n');
