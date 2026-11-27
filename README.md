@@ -135,6 +135,8 @@ Secret values that the scanners detect are redacted in CLI and JSON output (for 
 
 Acrionix Shield is an offline scanner with curated rules. A clean result means none of its rules matched, not that a project is free of vulnerabilities.
 
+The [daily npm advisory review workflow](.github/workflows/daily-npm-advisories.yml) checks GitHub's reviewed high and critical npm advisories plus malware advisories. It opens one dated GitHub issue with a prioritized shortlist of advisory IDs the scanner does not already reference; the workflow run summary contains the full list. The workflow does not add unreviewed rules or publish npm releases automatically; a maintainer checks affected versions and exploit conditions before adding a rule and releasing an updated Shield package.
+
 - **No full advisory database.** Ecosystem checks use a finite, curated list of high-impact incidents with affected versions or ranges taken from vendor advisories, GHSA/OSV and the original researchers. The scanner works offline and does not query any feed, so new or less-known vulnerabilities are not covered until a release adds them. Run it alongside each ecosystem's own audit:
 
   | Ecosystem | Full advisory check |
